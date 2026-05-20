@@ -26,12 +26,16 @@ type Config struct {
 }
 
 // Conn wraps a net.Conn with framed read/write and reconnect support.
+//
+// mu protects raw/transport field access (connection replacement).
+// writeMu serializes concurrent writers without blocking readers.
 type Conn struct {
-	cfg       Config
-	mu        sync.Mutex
-	raw       net.Conn
+	cfg      Config
+	mu       sync.Mutex // guards raw, transport fields
+	writeMu  sync.Mutex // serializes WriteMsg calls during I/O
+	raw      net.Conn
 	transport io.ReadWriteCloser // raw conn or encrypted session
-	stopPing  chan struct{}
+	stopPing chan struct{}
 }
 
 // New dials immediately and returns a ready Conn.
@@ -57,8 +61,11 @@ func New(cfg Config) (*Conn, error) {
 	return c, nil
 }
 
-// buildTransport wraps raw with a crypto.Session if cfg is non-nil.
+// buildTransport sets TCP_NODELAY and wraps raw with a crypto.Session if cfg is non-nil.
 func buildTransport(raw net.Conn, hsCfg *crypto.HandshakeConfig) (io.ReadWriteCloser, error) {
+	if tc, ok := raw.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+	}
 	if hsCfg == nil {
 		return raw, nil
 	}
@@ -66,22 +73,47 @@ func buildTransport(raw net.Conn, hsCfg *crypto.HandshakeConfig) (io.ReadWriteCl
 }
 
 // WriteMsg encodes and writes a framed message. Thread-safe.
+// TCP plaintext: single writev syscall via net.Buffers (1 syscall, no Nagle).
+// Other transports: two-write path (encrypted Session requires separate writes per frame).
 func (c *Conn) WriteMsg(msg protocol.Message) error {
 	msg.Header.PayloadLen = uint32(len(msg.Payload))
 	hdr := protocol.EncodeHeader(msg.Header)
 
+	// Snapshot transport reference under mu (non-blocking for reads).
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	raw := c.raw
+	transport := c.transport
+	isTCP := c.cfg.HandshakeCfg == nil
+	c.mu.Unlock()
+
+	// Serialize writes under writeMu (I/O can now run without blocking ReadMsg).
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
 	if c.cfg.WriteTimeout > 0 {
-		_ = c.raw.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
+		_ = raw.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
 	}
 
-	if _, err := c.transport.Write(hdr[:]); err != nil {
+	// TCP plaintext fast path: net.Buffers gives OS-level writev (1 syscall).
+	if _, ok := raw.(*net.TCPConn); ok && isTCP {
+		var bufs net.Buffers
+		if len(msg.Payload) > 0 {
+			bufs = net.Buffers{hdr[:], msg.Payload}
+		} else {
+			bufs = net.Buffers{hdr[:]}
+		}
+		_, err := bufs.WriteTo(transport.(net.Conn))
+		return err
+	}
+
+	// All other paths (encrypted session, net.Pipe, tests): two-write path.
+	// For encrypted Session: each Write is one frame; header and payload must be
+	// separate writes so ReadMsg can ReadFull each frame independently.
+	if _, err := transport.Write(hdr[:]); err != nil {
 		return err
 	}
 	if len(msg.Payload) > 0 {
-		if _, err := c.transport.Write(msg.Payload); err != nil {
+		if _, err := transport.Write(msg.Payload); err != nil {
 			return err
 		}
 	}
@@ -128,24 +160,35 @@ func (c *Conn) Reconnect() error {
 		raw.Close()
 		return err
 	}
+	c.writeMu.Lock()
 	c.mu.Lock()
 	oldTransport := c.transport
 	c.raw = raw
 	c.transport = transport
 	c.mu.Unlock()
+	c.writeMu.Unlock()
 	_ = oldTransport.Close()
 	return nil
 }
 
 // Close shuts down the connection and stops background goroutines.
+// Closes the raw conn first (outside mu) to unblock any in-progress writes,
+// then cleans up transport under mu.
 func (c *Conn) Close() error {
 	select {
 	case <-c.stopPing:
 	default:
 		close(c.stopPing)
 	}
+	// Grab raw without full lock to unblock any blocked I/O.
+	c.mu.Lock()
+	raw := c.raw
+	c.mu.Unlock()
+	_ = raw.Close()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// For encrypted sessions, transport.Close() may differ from raw.Close().
 	return c.transport.Close()
 }
 

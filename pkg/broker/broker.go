@@ -63,8 +63,10 @@ type Broker struct {
 	assemb *chunker.Assembler
 
 	mu      sync.Mutex
+	cond    *sync.Cond // signals when a slot becomes free
 	ring    []slot
 	ringLen int
+	freeIdx []int // stack of free slot indices (O(1) enqueue/free)
 
 	msgIDCounter uint64
 	ackCount     uint64 // counts acks for WAL compact trigger
@@ -97,6 +99,10 @@ func New(cfg Config) (*Broker, error) {
 		return nil, err
 	}
 
+	freeIdx := make([]int, cfg.RetryBuffer)
+	for i := range freeIdx {
+		freeIdx[i] = i
+	}
 	b := &Broker{
 		cfg:     cfg,
 		conn:    cfg.Conn,
@@ -105,8 +111,10 @@ func New(cfg Config) (*Broker, error) {
 		assemb:  chunker.NewAssembler(),
 		ring:    make([]slot, cfg.RetryBuffer),
 		ringLen: cfg.RetryBuffer,
+		freeIdx: freeIdx,
 		stop:    make(chan struct{}),
 	}
+	b.cond = sync.NewCond(&b.mu)
 
 	if cfg.WAL != nil {
 		if err := b.replayWAL(); err != nil {
@@ -222,55 +230,60 @@ func (b *Broker) Close() error {
 	default:
 		close(b.stop)
 	}
+	// Wake any goroutines blocked in enqueue waiting for a free slot.
+	b.cond.Broadcast()
 	// Close conn first so readLoop unblocks from ReadMsg, then wait.
 	err := b.conn.Close()
 	b.wg.Wait()
 	return err
 }
 
-// enqueue finds a free slot in the ring buffer (blocks until one is free).
+// enqueue claims a free slot via freeIdx stack (O(1)). Waits via sync.Cond if full.
 func (b *Broker) enqueue(msgID uint64, frags []protocol.Message) error {
-	for {
-		b.mu.Lock()
-		for i := range b.ring {
-			if !b.ring[i].active {
-				b.ring[i] = slot{
-					msgID:    msgID,
-					frags:    frags,
-					sendTime: time.Now(),
-					retries:  0,
-					dead:     false,
-					active:   true,
-				}
-				b.mu.Unlock()
-				return nil
-			}
-		}
+	b.mu.Lock()
+	for len(b.freeIdx) == 0 {
+		// Check stop without releasing permanently — use a goroutine signal trick.
+		// We release mu temporarily to check stop channel.
 		b.mu.Unlock()
-
-		// ring full — wait a bit
 		select {
 		case <-b.stop:
 			return errors.New("broker: closed")
-		case <-time.After(10 * time.Millisecond):
+		default:
+		}
+		b.mu.Lock()
+		if len(b.freeIdx) == 0 {
+			b.cond.Wait()
 		}
 	}
+	idx := b.freeIdx[len(b.freeIdx)-1]
+	b.freeIdx = b.freeIdx[:len(b.freeIdx)-1]
+	b.ring[idx] = slot{
+		msgID:    msgID,
+		frags:    frags,
+		sendTime: time.Now(),
+		active:   true,
+	}
+	b.mu.Unlock()
+	return nil
 }
 
-// freeSlot marks the slot for msgID as free.
+// freeSlot marks the slot for msgID as free and signals waiting enqueue callers.
 func (b *Broker) freeSlot(msgID uint64) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for i := range b.ring {
 		if b.ring[i].active && b.ring[i].msgID == msgID {
 			b.ring[i].active = false
+			b.freeIdx = append(b.freeIdx, i)
 			if b.cfg.WAL != nil {
 				_ = b.cfg.WAL.Ack(msgID)
 				atomic.AddUint64(&b.ackCount, 1)
 			}
+			b.mu.Unlock()
+			b.cond.Signal()
 			return
 		}
 	}
+	b.mu.Unlock()
 }
 
 // readLoop reads messages from the connection.
@@ -319,11 +332,14 @@ func isConnError(err error) bool {
 
 // handleReconnect attempts reconnect with backoff, then replays unacked slots.
 func (b *Broker) handleReconnect(delays []time.Duration) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for _, d := range delays {
+		timer.Reset(d)
 		select {
 		case <-b.stop:
 			return
-		case <-time.After(d):
+		case <-timer.C:
 		}
 		if err := b.conn.Reconnect(); err == nil {
 			b.replayUnacked()
@@ -454,11 +470,14 @@ func (b *Broker) checkTimeouts() {
 	var toSend [][]protocol.Message
 	var toDead []uint64
 
+	freed := 0
 	for _, a := range actions {
 		s := &b.ring[a.idx]
 		if a.dead {
 			s.dead = true
 			s.active = false
+			b.freeIdx = append(b.freeIdx, a.idx)
+			freed++
 			toDead = append(toDead, s.msgID)
 		} else {
 			s.retries++
@@ -469,6 +488,9 @@ func (b *Broker) checkTimeouts() {
 		}
 	}
 	b.mu.Unlock()
+	for i := 0; i < freed; i++ {
+		b.cond.Signal()
+	}
 
 	for _, frags := range toSend {
 		for _, f := range frags {
