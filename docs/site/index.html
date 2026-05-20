@@ -15,6 +15,7 @@
       --muted:    #8b949e;
       --accent:   #58a6ff;
       --accent2:  #3fb950;
+      --accent3:  #bc8cff;
       --warn:     #d29922;
       --code-bg:  #1f2937;
       --radius:   8px;
@@ -58,7 +59,7 @@
       margin-top: 16px;
       font-size: 1.2rem;
       color: var(--muted);
-      max-width: 520px;
+      max-width: 560px;
       margin-left: auto;
       margin-right: auto;
     }
@@ -100,7 +101,7 @@
     /* ── Feature cards ── */
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 16px;
     }
     .card {
@@ -141,6 +142,7 @@
     tbody tr:last-child td { border-bottom: none; }
     tbody tr:hover { background: var(--surface); }
     .num { font-variant-numeric: tabular-nums; color: var(--accent2); font-weight: 600; }
+    .num-dim { font-variant-numeric: tabular-nums; color: var(--warn); font-weight: 600; }
     .caption {
       margin-top: 10px;
       font-size: 0.8rem;
@@ -166,6 +168,84 @@
     .str { color: #a5d6ff; }
     .cm  { color: #8b949e; font-style: italic; }
     .pkg { color: #79c0ff; }
+    .num-lit { color: #79c0ff; }
+
+    /* ── Handshake SVG diagram ── */
+    .handshake-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 8px;
+    }
+    @media (max-width: 640px) {
+      .handshake-wrap { grid-template-columns: 1fr; }
+    }
+    .handshake-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .handshake-box h3 {
+      font-size: 0.88rem;
+      color: var(--accent3);
+      margin-bottom: 14px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .handshake-box pre {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: 0.78rem;
+      line-height: 1.65;
+      overflow-x: auto;
+    }
+
+    /* ── NAT diagram ── */
+    .nat-diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+    }
+    .nat-diagram pre {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: 0.8rem;
+      line-height: 1.7;
+    }
+
+    /* ── WAL format ── */
+    .wal-format {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .wal-format pre {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: 0.82rem;
+    }
+
+    /* ── Tag pills ── */
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .pill-green { background: #1a3a2a; color: var(--accent2); border: 1px solid #2ea043; }
+    .pill-blue  { background: #0d2044; color: var(--accent);  border: 1px solid #1f6feb; }
+    .pill-purple{ background: #2a1a44; color: var(--accent3); border: 1px solid #8957e5; }
 
     /* ── Download section ── */
     .dl-grid {
@@ -210,7 +290,7 @@
 <header>
   <span class="badge">Open Source / MIT</span>
   <h1>p2p-messaging</h1>
-  <p class="tagline">Direct P2P messaging. No broker. No overhead.</p>
+  <p class="tagline">Direct P2P messaging. E2E encrypted. Crash-safe. NAT hole-punch built in.</p>
   <div class="cta-group">
     <a class="btn btn-primary" href="https://github.com/jdp5949/p2p-messaging/releases">Download Binary</a>
     <a class="btn btn-secondary" href="https://github.com/jdp5949/p2p-messaging">View on GitHub</a>
@@ -226,24 +306,193 @@
       <div class="card">
         <span class="card-icon">&#9889;</span>
         <h3>Fast</h3>
-        <p>Up to 32,715 msg/s at 256 B. Up to 1,016 MB/s at 64 KB. Measured on real public internet.</p>
+        <p>23,059 msg/s plaintext. 7,053 msg/s encrypted (Noise + AES-256-GCM). Measured on real public internet.</p>
       </div>
       <div class="card">
         <span class="card-icon">&#128274;</span>
         <h3>Reliable</h3>
-        <p>ACK/NACK per message. Exponential backoff retry. Ring-buffer replay on reconnect. No message silently dropped.</p>
+        <p>ACK/NACK per message. Exponential backoff retry. WAL replay across crashes. No message silently dropped.</p>
       </div>
       <div class="card">
         <span class="card-icon">&#128736;</span>
         <h3>Simple</h3>
         <p>Single Go library. No external broker process. One relay binary for NAT traversal. Binary-only dependency.</p>
       </div>
+      <div class="card">
+        <span class="card-icon">&#128272;</span>
+        <h3>Secure</h3>
+        <p>Noise Protocol Framework (WireGuard-grade). Ed25519 identity keys. PAKE bootstrap. TOFU key pinning.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Security -->
+  <section>
+    <h2>Security <span class="pill pill-purple">NEW</span></h2>
+    <p style="color:var(--muted); margin-bottom:24px;">
+      Built on the <a href="https://noiseprotocol.org/">Noise Protocol Framework</a> — the same foundation as WireGuard and the Lightning Network.
+      Ed25519 identity keys. X25519 ECDH key exchange. AES-256-GCM session encryption.
+    </p>
+
+    <div class="handshake-wrap">
+      <div class="handshake-box">
+        <h3>First Connect — Pattern XX + PAKE</h3>
+        <pre><code>Alice                      Bob
+  |-- code "test-2026" --|
+  |    (out-of-band)     |
+  |                      |
+  |--> e                 |
+  |<-- e, ee, s, es      |
+  |--> s, se             |
+  |                      |
+  | X25519 ECDH + PAKE   |
+  | derive session key   |
+  | pin remote pub key   |
+  |                      |
+  |&lt;== AES-256-GCM ===&gt;|</code></pre>
+      </div>
+      <div class="handshake-box">
+        <h3>Subsequent Connects — Pattern KK</h3>
+        <pre><code>Alice                      Bob
+  | (both pubkeys known) |
+  |                      |
+  |--> e, es, ss         |
+  |&lt;-- e, ee, se         |
+  |                      |
+  | No PAKE needed.      |
+  | Faster handshake.    |
+  | Full mutual auth.    |
+  |                      |
+  |&lt;== AES-256-GCM ===&gt;|</code></pre>
+      </div>
+    </div>
+
+    <p style="color:var(--muted); margin-top:16px; font-size:0.88rem;">
+      Identity keys are Ed25519, stored at <code>~/.p2p/id_ed25519</code> (mode 0600).
+      Known peers are pinned in <code>~/.p2p/known_peers</code> using SSH known_hosts format.
+      First connection uses a one-time PAKE code shared out-of-band; subsequent connections skip the code entirely.
+    </p>
+  </section>
+
+  <!-- Encrypted quick look -->
+  <section>
+    <h2>Quick Look — Encrypted Broker</h2>
+    <pre><code><span class="kw">package</span> main
+
+<span class="kw">import</span> (
+    <span class="str">"context"</span>
+    <span class="str">"log"</span>
+
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/broker"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/conn"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/crypto"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/wal"</span>
+)
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    <span class="cm">// Load Ed25519 identity key (generated on first run)</span>
+    id, _ := <span class="pkg">crypto</span>.<span class="fn">LoadOrGenerateIdentity</span>(<span class="str">"~/.p2p/id_ed25519"</span>)
+    peers, _ := <span class="pkg">crypto</span>.<span class="fn">LoadKnownPeers</span>(<span class="str">"~/.p2p/known_peers"</span>)
+
+    <span class="cm">// Dial with Noise XX + PAKE (first connect)</span>
+    c, err := <span class="pkg">conn</span>.<span class="fn">DialEncrypted</span>(context.<span class="fn">Background</span>(), <span class="str">"peer.example.com:9001"</span>,
+        <span class="pkg">crypto</span>.Options{
+            Identity:   id,
+            KnownPeers: peers,
+            PeerName:   <span class="str">"bob"</span>,
+            PAKECode:   <span class="str">"test-2026"</span>, <span class="cm">// empty = KK (known peer)</span>
+        },
+    )
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
+
+    <span class="cm">// Open WAL for crash-safe at-least-once delivery</span>
+    w, _ := <span class="pkg">wal</span>.<span class="fn">Open</span>(<span class="str">"/var/lib/p2p/send.wal"</span>)
+    <span class="kw">defer</span> w.<span class="fn">Close</span>()
+
+    <span class="cm">// Replay unacked messages from previous run</span>
+    unacked, _ := w.<span class="fn">Replay</span>()
+    <span class="kw">for</span> _, msg := <span class="kw">range</span> unacked {
+        <span class="pkg">log</span>.<span class="fn">Printf</span>(<span class="str">"replaying msgID=%d"</span>, msg.MsgID)
+    }
+
+    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num-lit">10_000</span>, MaxRetries: <span class="num-lit">5</span>, WAL: w})
+    <span class="kw">defer</span> b.<span class="fn">Close</span>()
+}</code></pre>
+  </section>
+
+  <!-- WAL -->
+  <section>
+    <h2>Persistence (WAL) <span class="pill pill-green">NEW</span></h2>
+    <p style="color:var(--muted); margin-bottom:16px;">
+      Append-only write-ahead log for at-least-once delivery across process crashes.
+    </p>
+    <div class="wal-format">
+      <h3 style="font-size:0.82rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:12px;">Binary frame format (big-endian)</h3>
+      <pre><code>[Op : 1 byte][Length : 4 bytes][MsgID : 8 bytes][Payload : N bytes]
+
+Op values:
+  0x01  OpSend — written before each network write
+  0x02  OpAck  — written when ACK received (eligible for compaction)</code></pre>
+    </div>
+    <p style="color:var(--muted); font-size:0.88rem;">
+      <code>WAL.Append()</code> before send &rarr;
+      <code>WAL.Ack()</code> on ACK &rarr;
+      <code>WAL.Replay()</code> on startup &rarr;
+      <code>WAL.Compact()</code> every 60 s.
+      Semantics: at-least-once. Use <code>MsgID</code> for receiver-side deduplication.
+    </p>
+  </section>
+
+  <!-- NAT -->
+  <section>
+    <h2>NAT Traversal <span class="pill pill-blue">UPGRADED</span></h2>
+    <p style="color:var(--muted); margin-bottom:16px;">
+      TCP simultaneous-open via SO_REUSEPORT. Relay coordinates timing; direct path wins. Falls back to relay byte-bridge after 5 s.
+    </p>
+    <div class="nat-diagram">
+      <pre><code>Peer A                Relay                 Peer B
+  |-- register -------->|<------ register --|
+  |<-- Info(B addrs) ---|--- Info(A addrs) ->|
+  |                     |                   |
+  |<======= START signal (simultaneous) ====>|
+  |                                          |
+  |-------- TCP simultaneous-open (SO_REUSEPORT) -------->|
+  |<================ direct TCP link ===================>|
+  |              (PUNCH_OK sent to both)                 |
+  |                                                      |
+  |     if timeout after 5 s: relay byte-bridge          |</code></pre>
     </div>
   </section>
 
   <!-- Benchmarks -->
   <section>
     <h2>Benchmarks</h2>
+    <div class="bench-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Throughput</th>
+            <th>Bandwidth</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plaintext TCP</td>
+            <td class="num">23,059 msg/s</td>
+            <td class="num">23.6 MB/s</td>
+          </tr>
+          <tr>
+            <td>Noise XX + AES-256-GCM</td>
+            <td class="num-dim">7,053 msg/s</td>
+            <td class="num-dim">7.2 MB/s</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">Mac to Oracle Cloud VM, public internet (~50 ms RTT). 5,000 x 1,024-byte messages. Single stream.</p>
+
+    <p style="margin-top:24px; margin-bottom:12px; color:var(--muted); font-size:0.88rem;">Historical multi-size numbers (plaintext, ~80 ms RTT):</p>
     <div class="bench-wrap">
       <table>
         <thead>
@@ -261,12 +510,11 @@
         </tbody>
       </table>
     </div>
-    <p class="caption">Mac to Oracle Cloud, public internet (~80 ms RTT). Single stream, no parallelism.</p>
   </section>
 
-  <!-- Code snippet -->
+  <!-- Plain quick look -->
   <section>
-    <h2>Quick Look</h2>
+    <h2>Quick Look — Plaintext Broker</h2>
     <pre><code><span class="kw">package</span> main
 
 <span class="kw">import</span> (
@@ -284,7 +532,7 @@
     <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
 
     <span class="cm">// Broker adds ACK/retry/ring-buffer guarantees</span>
-    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num">10_000</span>, MaxRetries: <span class="num">5</span>})
+    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num-lit">10_000</span>, MaxRetries: <span class="num-lit">5</span>})
     <span class="kw">defer</span> b.<span class="fn">Close</span>()
 
     <span class="cm">// Send — chunking and zstd compression handled automatically</span>
@@ -302,7 +550,7 @@
   <!-- Wire format -->
   <section>
     <h2>Wire Format</h2>
-    <p style="color:var(--muted); margin-bottom:16px;">Every frame starts with a 20-byte binary header (big-endian). Zero parsing ambiguity.</p>
+    <p style="color:var(--muted); margin-bottom:16px;">Every frame starts with a 20-byte binary header (big-endian). Zero parsing ambiguity. Noise ciphertext wraps entire frames when encryption is enabled.</p>
     <div class="wire-table">
       <table>
         <thead>
@@ -334,17 +582,17 @@
       <div class="dl-card">
         <h3>Linux</h3>
         <ul>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-linux-amd64">peer — linux/amd64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-linux-amd64">relay — linux/amd64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-linux-amd64">bench — linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-linux-amd64">peer &mdash; linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-linux-amd64">relay &mdash; linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-linux-amd64">bench &mdash; linux/amd64</a></li>
         </ul>
       </div>
       <div class="dl-card">
         <h3>macOS</h3>
         <ul>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-darwin-arm64">peer — darwin/arm64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-darwin-arm64">relay — darwin/arm64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-darwin-arm64">bench — darwin/arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-darwin-arm64">peer &mdash; darwin/arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-darwin-arm64">relay &mdash; darwin/arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-darwin-arm64">bench &mdash; darwin/arm64</a></li>
         </ul>
       </div>
       <div class="dl-card">
@@ -354,6 +602,7 @@
           <li style="font-size:0.85rem;color:var(--muted);">git clone https://github.com/jdp5949/p2p-messaging</li>
           <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/peer</li>
           <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/relay</li>
+          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/bench</li>
         </ul>
       </div>
     </div>
@@ -369,7 +618,7 @@
     &nbsp;&middot;&nbsp;
     <a href="https://github.com/jdp5949/p2p-messaging/releases">Releases</a>
   </p>
-  <p style="margin-top:8px;">p2p-messaging &mdash; built in Go. No broker. No overhead.</p>
+  <p style="margin-top:8px;">p2p-messaging &mdash; built in Go. Noise encrypted. WAL-safe. No broker overhead.</p>
 </footer>
 
 </body>
