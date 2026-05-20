@@ -10,10 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // DefaultTimeout is the punch attempt deadline if the caller passes 0.
@@ -31,27 +28,10 @@ type Result struct {
 	UsedFallback bool     // true when falling back to relay-bridged conn
 }
 
-// reuseControl is a net.ListenConfig.Control function that sets
-// SO_REUSEADDR and SO_REUSEPORT so that a local port can be both
-// listened on and dialled from simultaneously.
-func reuseControl(network, address string, c syscall.RawConn) error {
-	var setSockOptErr error
-	err := c.Control(func(fd uintptr) {
-		if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
-			setSockOptErr = fmt.Errorf("SO_REUSEADDR: %w", err)
-			return
-		}
-		if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); err != nil {
-			setSockOptErr = fmt.Errorf("SO_REUSEPORT: %w", err)
-		}
-	})
-	if err != nil {
-		return err
-	}
-	return setSockOptErr
-}
-
-// listenConfig returns a net.ListenConfig with SO_REUSEPORT enabled.
+// listenConfig returns a net.ListenConfig with SO_REUSEPORT enabled on
+// platforms that support it (linux, darwin, *bsd). On platforms without
+// SO_REUSEPORT (windows) it returns a default ListenConfig — the port
+// reuse fallback won't work but the rest of hole-punching still tries.
 func listenConfig() net.ListenConfig {
 	return net.ListenConfig{Control: reuseControl}
 }
