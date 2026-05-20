@@ -273,6 +273,40 @@
     .wire-table { overflow-x: auto; }
     .wire-table table thead th { font-size: 0.72rem; }
 
+    /* ── Benefits list ── */
+    .benefits-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 12px;
+    }
+    .benefits-list li {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    .benefits-list li strong { color: var(--text); }
+
+    /* ── Getting Started steps ── */
+    .gs-step {
+      margin-bottom: 28px;
+    }
+    .gs-step h3 {
+      margin-bottom: 10px;
+      color: var(--accent);
+    }
+
+    /* ── Peers walkthrough ── */
+    .peers-block {
+      margin-bottom: 28px;
+    }
+    .peers-block h3 {
+      margin-bottom: 10px;
+    }
+
     /* ── Footer ── */
     footer {
       border-top: 1px solid var(--border);
@@ -299,7 +333,7 @@
 
 <main>
 
-  <!-- Features -->
+  <!-- 1. Why p2p-messaging -->
   <section>
     <h2>Why p2p-messaging</h2>
     <div class="cards">
@@ -326,7 +360,132 @@
     </div>
   </section>
 
-  <!-- Security -->
+  <!-- 2. Benefits -->
+  <section>
+    <h2>Benefits</h2>
+    <ul class="benefits-list">
+      <li><strong>No broker in hot path</strong> — direct P2P, no middleman cost</li>
+      <li><strong>E2E encrypted</strong> — Noise XX + AES-256-GCM by default, plaintext optional</li>
+      <li><strong>NAT-friendly</strong> — TCP hole-punch with relay fallback (works behind home/corp networks)</li>
+      <li><strong>At-least-once delivery</strong> — ACK/NACK + retry + WAL persistence across crashes</li>
+      <li><strong>SSH-style identity</strong> — Ed25519 keys, known_peers like SSH known_hosts</li>
+      <li><strong>Industry-standard fast</strong> — 2.4&times; speedup with batching, near-line-rate for large msgs</li>
+      <li><strong>Zero external runtime</strong> — single Go binary, no broker/DB/sidecar to deploy</li>
+      <li><strong>MIT licensed</strong> — use anywhere</li>
+    </ul>
+  </section>
+
+  <!-- 3. Getting Started -->
+  <section>
+    <h2>Getting Started</h2>
+
+    <div class="gs-step">
+      <h3>Option A: Install pre-built binary</h3>
+      <pre><code><span class="cm"># Linux amd64</span>
+curl -sL https://github.com/jdp5949/p2p-messaging/releases/download/v0.1.0/peer-linux-amd64 -o peer
+chmod +x peer
+
+<span class="cm"># macOS arm64 (M-series)</span>
+curl -sL https://github.com/jdp5949/p2p-messaging/releases/download/v0.1.0/peer-darwin-arm64 -o peer
+chmod +x peer</code></pre>
+    </div>
+
+    <div class="gs-step">
+      <h3>Option B: Build from source</h3>
+      <pre><code>git clone https://github.com/jdp5949/p2p-messaging
+cd p2p-messaging
+go build ./cmd/peer ./cmd/relay ./cmd/bench</code></pre>
+    </div>
+  </section>
+
+  <!-- 4. Running Two Peers -->
+  <section>
+    <h2>Running Two Peers</h2>
+
+    <div class="peers-block">
+      <h3>Plaintext (LAN / trusted network)</h3>
+      <pre><code><span class="cm"># Peer B (receiver) — listens on :9000</span>
+./peer -listen :9000 -no-crypto
+
+<span class="cm"># Peer A (sender) — dials, types lines to stdin</span>
+./peer -addr peer-b.local:9000 -no-crypto
+<span class="cm">&gt; hello world</span></code></pre>
+    </div>
+
+    <div class="peers-block">
+      <h3>Encrypted first connect (PAKE code shared out-of-band)</h3>
+      <pre><code><span class="cm"># Both peers exchange a one-time code "snow-tiger-72" (e.g. via Signal)</span>
+
+<span class="cm"># Peer B</span>
+./peer -listen :9000 -pake snow-tiger-72
+
+<span class="cm"># Peer A</span>
+./peer -addr peer-b.example.com:9000 -peer-name b -pake snow-tiger-72</code></pre>
+    </div>
+
+    <div class="peers-block">
+      <h3>Subsequent encrypted connects (no PAKE needed — keys already pinned)</h3>
+      <pre><code>./peer -addr peer-b.example.com:9000 -peer-name b</code></pre>
+    </div>
+
+    <div class="peers-block">
+      <h3>With persistence (survives crashes)</h3>
+      <pre><code>./peer -addr peer-b.example.com:9000 -peer-name b -wal ~/.p2p/messages.wal</code></pre>
+    </div>
+  </section>
+
+  <!-- 5. Using as a Library -->
+  <section>
+    <h2>Using as a Library</h2>
+    <pre><code><span class="kw">package</span> main
+
+<span class="kw">import</span> (
+    <span class="str">"log"</span>
+    <span class="str">"net"</span>
+    <span class="str">"time"</span>
+
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/broker"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/conn"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/crypto"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/protocol"</span>
+)
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    <span class="cm">// Load or generate identity key (like ~/.ssh/id_ed25519)</span>
+    id, _ := <span class="pkg">crypto</span>.<span class="fn">LoadOrGenerateIdentity</span>(<span class="str">"~/.p2p/id_ed25519"</span>)
+    kp, _ := <span class="pkg">crypto</span>.<span class="fn">LoadKnownPeers</span>(<span class="str">"~/.p2p/known_peers"</span>)
+
+    <span class="cm">// Dial remote</span>
+    c, _ := <span class="pkg">conn</span>.<span class="fn">New</span>(<span class="pkg">conn</span>.Config{
+        DialFunc: <span class="kw">func</span>() (net.Conn, <span class="kw">error</span>) {
+            <span class="kw">return</span> net.<span class="fn">Dial</span>(<span class="str">"tcp"</span>, <span class="str">"peer-b.example.com:9000"</span>)
+        },
+        BatchSize:    <span class="num-lit">65536</span>,           <span class="cm">// 64 KB batching for throughput</span>
+        BatchTimeout: <span class="num-lit">5</span> * time.Millisecond,
+        HandshakeCfg: &amp;<span class="pkg">crypto</span>.HandshakeConfig{
+            Identity:   id,
+            KnownPeers: kp,
+            PeerName:   <span class="str">"b"</span>,
+            PAKECode:   <span class="str">"snow-tiger-72"</span>, <span class="cm">// empty for repeat connects</span>
+            Initiator:  <span class="kw">true</span>,
+        },
+    })
+
+    <span class="cm">// Create broker</span>
+    b, _ := <span class="pkg">broker</span>.<span class="fn">New</span>(<span class="pkg">broker</span>.Config{
+        Conn: c,
+        OnInbound: <span class="kw">func</span>(m <span class="pkg">broker</span>.InboundMsg) {
+            <span class="pkg">log</span>.<span class="fn">Printf</span>(<span class="str">"received: %s"</span>, m.Payload)
+        },
+    })
+    <span class="kw">defer</span> b.<span class="fn">Close</span>()
+
+    <span class="cm">// Send</span>
+    b.<span class="fn">Send</span>(<span class="pkg">protocol</span>.ContentText, <span class="pkg">protocol</span>.PriorityNormal, []<span class="kw">byte</span>(<span class="str">"hello!"</span>))
+}</code></pre>
+  </section>
+
+  <!-- 6. Security -->
   <section>
     <h2>Security <span class="pill pill-purple">NEW</span></h2>
     <p style="color:var(--muted); margin-bottom:24px;">
@@ -342,7 +501,7 @@
   |    (out-of-band)     |
   |                      |
   |--> e                 |
-  |<-- e, ee, s, es      |
+  |&lt;-- e, ee, s, es      |
   |--> s, se             |
   |                      |
   | X25519 ECDH + PAKE   |
@@ -374,53 +533,7 @@
     </p>
   </section>
 
-  <!-- Encrypted quick look -->
-  <section>
-    <h2>Quick Look — Encrypted Broker</h2>
-    <pre><code><span class="kw">package</span> main
-
-<span class="kw">import</span> (
-    <span class="str">"context"</span>
-    <span class="str">"log"</span>
-
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/broker"</span>
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/conn"</span>
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/crypto"</span>
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/wal"</span>
-)
-
-<span class="kw">func</span> <span class="fn">main</span>() {
-    <span class="cm">// Load Ed25519 identity key (generated on first run)</span>
-    id, _ := <span class="pkg">crypto</span>.<span class="fn">LoadOrGenerateIdentity</span>(<span class="str">"~/.p2p/id_ed25519"</span>)
-    peers, _ := <span class="pkg">crypto</span>.<span class="fn">LoadKnownPeers</span>(<span class="str">"~/.p2p/known_peers"</span>)
-
-    <span class="cm">// Dial with Noise XX + PAKE (first connect)</span>
-    c, err := <span class="pkg">conn</span>.<span class="fn">DialEncrypted</span>(context.<span class="fn">Background</span>(), <span class="str">"peer.example.com:9001"</span>,
-        <span class="pkg">crypto</span>.Options{
-            Identity:   id,
-            KnownPeers: peers,
-            PeerName:   <span class="str">"bob"</span>,
-            PAKECode:   <span class="str">"test-2026"</span>, <span class="cm">// empty = KK (known peer)</span>
-        },
-    )
-    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
-
-    <span class="cm">// Open WAL for crash-safe at-least-once delivery</span>
-    w, _ := <span class="pkg">wal</span>.<span class="fn">Open</span>(<span class="str">"/var/lib/p2p/send.wal"</span>)
-    <span class="kw">defer</span> w.<span class="fn">Close</span>()
-
-    <span class="cm">// Replay unacked messages from previous run</span>
-    unacked, _ := w.<span class="fn">Replay</span>()
-    <span class="kw">for</span> _, msg := <span class="kw">range</span> unacked {
-        <span class="pkg">log</span>.<span class="fn">Printf</span>(<span class="str">"replaying msgID=%d"</span>, msg.MsgID)
-    }
-
-    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num-lit">10_000</span>, MaxRetries: <span class="num-lit">5</span>, WAL: w})
-    <span class="kw">defer</span> b.<span class="fn">Close</span>()
-}</code></pre>
-  </section>
-
-  <!-- WAL -->
+  <!-- 7. WAL -->
   <section>
     <h2>Persistence (WAL) <span class="pill pill-green">NEW</span></h2>
     <p style="color:var(--muted); margin-bottom:16px;">
@@ -443,7 +556,7 @@ Op values:
     </p>
   </section>
 
-  <!-- NAT -->
+  <!-- 8. NAT -->
   <section>
     <h2>NAT Traversal <span class="pill pill-blue">UPGRADED</span></h2>
     <p style="color:var(--muted); margin-bottom:16px;">
@@ -451,103 +564,20 @@ Op values:
     </p>
     <div class="nat-diagram">
       <pre><code>Peer A                Relay                 Peer B
-  |-- register -------->|<------ register --|
-  |<-- Info(B addrs) ---|--- Info(A addrs) ->|
+  |-- register -------->|&lt;------ register --|
+  |&lt;-- Info(B addrs) ---|--- Info(A addrs) -&gt;|
   |                     |                   |
-  |<======= START signal (simultaneous) ====>|
+  |&lt;======= START signal (simultaneous) ====&gt;|
   |                                          |
-  |-------- TCP simultaneous-open (SO_REUSEPORT) -------->|
-  |<================ direct TCP link ===================>|
+  |-------- TCP simultaneous-open (SO_REUSEPORT) --------&gt;|
+  |&lt;================ direct TCP link ===================&gt;|
   |              (PUNCH_OK sent to both)                 |
   |                                                      |
   |     if timeout after 5 s: relay byte-bridge          |</code></pre>
     </div>
   </section>
 
-  <!-- Benchmarks -->
-  <section>
-    <h2>Benchmarks</h2>
-    <div class="bench-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Mode</th>
-            <th>Throughput</th>
-            <th>Bandwidth</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Plaintext TCP</td>
-            <td class="num">23,059 msg/s</td>
-            <td class="num">23.6 MB/s</td>
-          </tr>
-          <tr>
-            <td>Noise XX + AES-256-GCM</td>
-            <td class="num-dim">7,053 msg/s</td>
-            <td class="num-dim">7.2 MB/s</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="caption">Mac to Oracle Cloud VM, public internet (~50 ms RTT). 5,000 x 1,024-byte messages. Single stream.</p>
-
-    <p style="margin-top:24px; margin-bottom:12px; color:var(--muted); font-size:0.88rem;">Historical multi-size numbers (plaintext, ~80 ms RTT):</p>
-    <div class="bench-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Message Size</th>
-            <th>Throughput</th>
-            <th>Bandwidth</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>256 B</td><td class="num">32,715 msg/s</td><td class="num">8.38 MB/s</td></tr>
-          <tr><td>1 KB</td><td class="num">7,291 msg/s</td><td class="num">7.47 MB/s</td></tr>
-          <tr><td>8 KB</td><td class="num">21,904 msg/s</td><td class="num">179 MB/s</td></tr>
-          <tr><td>64 KB</td><td class="num">15,506 msg/s</td><td class="num">1,016 MB/s</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- Plain quick look -->
-  <section>
-    <h2>Quick Look — Plaintext Broker</h2>
-    <pre><code><span class="kw">package</span> main
-
-<span class="kw">import</span> (
-    <span class="str">"context"</span>
-    <span class="str">"fmt"</span>
-    <span class="str">"log"</span>
-
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/broker"</span>
-    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/conn"</span>
-)
-
-<span class="kw">func</span> <span class="fn">main</span>() {
-    <span class="cm">// Dial remote peer directly — no broker process needed</span>
-    c, err := <span class="pkg">conn</span>.<span class="fn">Dial</span>(context.<span class="fn">Background</span>(), <span class="str">"peer.example.com:9001"</span>)
-    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
-
-    <span class="cm">// Broker adds ACK/retry/ring-buffer guarantees</span>
-    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num-lit">10_000</span>, MaxRetries: <span class="num-lit">5</span>})
-    <span class="kw">defer</span> b.<span class="fn">Close</span>()
-
-    <span class="cm">// Send — chunking and zstd compression handled automatically</span>
-    msgID, err := b.<span class="fn">Send</span>(context.<span class="fn">Background</span>(), []<span class="kw">byte</span>(<span class="str">"hello"</span>))
-    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
-    <span class="pkg">fmt</span>.<span class="fn">Println</span>(<span class="str">"sent"</span>, msgID)
-
-    <span class="cm">// Receive</span>
-    msg, err := b.<span class="fn">Recv</span>(context.<span class="fn">Background</span>())
-    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
-    <span class="pkg">fmt</span>.<span class="fn">Printf</span>(<span class="str">"received: %s\n"</span>, msg.Payload)
-}</code></pre>
-  </section>
-
-  <!-- Wire format -->
+  <!-- 9. Wire format -->
   <section>
     <h2>Wire Format</h2>
     <p style="color:var(--muted); margin-bottom:16px;">Every frame starts with a 20-byte binary header (big-endian). Zero parsing ambiguity. Noise ciphertext wraps entire frames when encryption is enabled.</p>
@@ -575,7 +605,59 @@ Op values:
     </div>
   </section>
 
-  <!-- Download -->
+  <!-- 10. Benchmarks -->
+  <section>
+    <h2>Benchmarks</h2>
+
+    <h3 style="margin-bottom:12px;">Public internet, Mac &rarr; Oracle Cloud, 50,000 &times; 1 KB messages</h3>
+    <div class="bench-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Throughput</th>
+            <th>E2E time</th>
+            <th>Wire BW</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plaintext, no batching</td>
+            <td class="num-dim">7,805 msg/s</td>
+            <td class="num-dim">6.4 s</td>
+            <td class="num-dim">64 Mbps</td>
+          </tr>
+          <tr>
+            <td>Plaintext + 64 KB batch (5 ms flush)</td>
+            <td class="num">18,793 msg/s</td>
+            <td class="num">2.7 s</td>
+            <td class="num">154 Mbps</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:32px; margin-bottom:12px;">Sustained transfers (no batching)</h3>
+    <div class="bench-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Msg size</th>
+            <th>Throughput</th>
+            <th>Wire BW</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1 KB</td><td class="num">9,008 msg/s</td><td class="num">74 Mbps</td></tr>
+          <tr><td>8 KB</td><td class="num">5,290 msg/s</td><td class="num">346 Mbps</td></tr>
+          <tr><td>64 KB</td><td class="num">1,791 msg/s</td><td class="num">938 Mbps</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">Numbers measured against Oracle Cloud free-tier VM. Code ceiling on localhost is ~70K msg/s for 1 KB — bottleneck is per-msg overhead, not wire.</p>
+  </section>
+
+  <!-- 11. Download -->
   <section>
     <h2>Download</h2>
     <div class="dl-grid">
