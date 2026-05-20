@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
 )
+
+const MaxPayloadSize = 16 * 1024 * 1024 // 16 MB
 
 // Config holds dial and timeout settings for Conn.
 type Config struct {
@@ -81,6 +84,9 @@ func (c *Conn) ReadMsg() (protocol.Message, error) {
 	}
 
 	hdr := protocol.DecodeHeader(hdrBuf)
+	if hdr.PayloadLen > MaxPayloadSize {
+		return protocol.Message{}, fmt.Errorf("conn: payload size %d exceeds limit %d", hdr.PayloadLen, MaxPayloadSize)
+	}
 	msg := protocol.Message{Header: hdr}
 
 	if hdr.PayloadLen > 0 {

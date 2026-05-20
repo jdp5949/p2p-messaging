@@ -128,7 +128,9 @@ func (b *Broker) Send(ct protocol.ContentType, priority protocol.Priority, paylo
 
 	for _, f := range frags {
 		if err := b.conn.WriteMsg(f); err != nil {
-			return msgID, err
+			// Free slot so caller can retry cleanly without duplicate in-flight.
+			b.freeSlot(msgID)
+			return 0, err
 		}
 	}
 	return msgID, nil
@@ -191,7 +193,7 @@ func (b *Broker) freeSlot(msgID uint64) {
 // readLoop reads messages from the connection.
 func (b *Broker) readLoop() {
 	defer b.wg.Done()
-	reconnectDelays := []time.Duration{1, 2, 4, 8, 16, 30}
+	reconnectDelays := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second}
 
 	for {
 		select {
@@ -238,7 +240,7 @@ func (b *Broker) handleReconnect(delays []time.Duration) {
 		select {
 		case <-b.stop:
 			return
-		case <-time.After(d * time.Second):
+		case <-time.After(d):
 		}
 		if err := b.conn.Reconnect(); err == nil {
 			b.replayUnacked()
@@ -248,14 +250,19 @@ func (b *Broker) handleReconnect(delays []time.Duration) {
 }
 
 // replayUnacked resends all active (unacked) slots after reconnect.
+// Resets sendTime so the retry timer gives each message a fresh window.
 func (b *Broker) replayUnacked() {
+	now := time.Now()
 	b.mu.Lock()
 	var toReplay [][]protocol.Message
 	for i := range b.ring {
-		if b.ring[i].active && !b.ring[i].dead {
-			cp := make([]protocol.Message, len(b.ring[i].frags))
-			copy(cp, b.ring[i].frags)
+		s := &b.ring[i]
+		if s.active && !s.dead {
+			cp := make([]protocol.Message, len(s.frags))
+			copy(cp, s.frags)
 			toReplay = append(toReplay, cp)
+			s.sendTime = now
+			s.retries = 0
 		}
 	}
 	b.mu.Unlock()

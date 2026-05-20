@@ -8,6 +8,12 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
+)
+
+const (
+	sessionIDMaxBytes  = 256
+	sessionWaitTimeout = 60 * time.Second
 )
 
 type waitingPeer struct {
@@ -40,49 +46,64 @@ func main() {
 	}
 }
 
-func handle(conn net.Conn) {
-	reader := bufio.NewReader(conn)
+func handle(c net.Conn) {
+	// Limit session ID read to prevent memory exhaustion.
+	limited := io.LimitedReader{R: c, N: sessionIDMaxBytes}
+	reader := bufio.NewReader(&limited)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		log.Printf("[RELAY] read session id error: %v", err)
-		conn.Close()
+		c.Close()
 		return
 	}
 	sessionID := strings.TrimRight(line, "\r\n")
-	log.Printf("[RELAY] peer %s connected session=%s", conn.RemoteAddr(), sessionID)
+	log.Printf("[RELAY] peer %s connected session=%s", c.RemoteAddr(), sessionID)
 
 	mu.Lock()
 	wp, exists := pending[sessionID]
 	if !exists {
 		ch := make(chan net.Conn, 1)
-		pending[sessionID] = &waitingPeer{conn: conn, ch: ch}
+		pending[sessionID] = &waitingPeer{conn: c, ch: ch}
 		mu.Unlock()
-		peer := <-ch
-		bridge(conn, peer, sessionID)
+		// Wait for a matching peer with timeout to prevent goroutine leak.
+		select {
+		case peer := <-ch:
+			bridge(c, peer, sessionID)
+		case <-time.After(sessionWaitTimeout):
+			mu.Lock()
+			delete(pending, sessionID)
+			mu.Unlock()
+			log.Printf("[RELAY] session=%s timed out waiting for peer", sessionID)
+			c.Close()
+		}
 		return
 	}
 	delete(pending, sessionID)
 	mu.Unlock()
 
 	log.Printf("[RELAY] matched session=%s", sessionID)
-	wp.ch <- conn
+	wp.ch <- c
 }
 
 func bridge(a, b net.Conn, sessionID string) {
 	defer a.Close()
 	defer b.Close()
 
+	type halfCloser interface{ CloseWrite() error }
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	copy := func(dst, src net.Conn) {
+	pipe := func(dst, src net.Conn) {
 		defer wg.Done()
 		io.Copy(dst, src)
-		dst.(*net.TCPConn).CloseWrite()
+		if hc, ok := dst.(halfCloser); ok {
+			hc.CloseWrite()
+		}
 	}
 
-	go copy(a, b)
-	go copy(b, a)
+	go pipe(a, b)
+	go pipe(b, a)
 	wg.Wait()
 	log.Printf("[RELAY] session=%s closed", sessionID)
 }

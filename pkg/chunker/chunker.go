@@ -2,6 +2,7 @@ package chunker
 
 import (
 	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -10,8 +11,9 @@ import (
 )
 
 const (
-	ChunkSize  = 512 * 1024 // 512 KB
-	MaxStreams = 8
+	ChunkSize         = 512 * 1024 // 512 KB
+	MaxStreams         = 8
+	DefaultMaxStreams  = 1024
 )
 
 // Split splits payload into fragment protocol.Messages ready to send.
@@ -22,6 +24,9 @@ func Split(msgID uint64, ct protocol.ContentType, payload []byte, enc *compress.
 	}
 
 	chunks := splitBytes(data)
+	if len(chunks) > math.MaxUint16 {
+		return nil, errors.New("chunker: payload too large (exceeds 65535 fragments)")
+	}
 	total := uint16(len(chunks))
 
 	msgs := make([]protocol.Message, len(chunks))
@@ -82,13 +87,14 @@ type streamState struct {
 
 // Assembler reassembles fragments into complete payloads.
 type Assembler struct {
-	mu      sync.Mutex
-	streams map[uint64]*streamState
+	mu         sync.Mutex
+	streams    map[uint64]*streamState
+	maxStreams  int
 }
 
 // NewAssembler returns a new Assembler.
 func NewAssembler() *Assembler {
-	return &Assembler{streams: make(map[uint64]*streamState)}
+	return &Assembler{streams: make(map[uint64]*streamState), maxStreams: DefaultMaxStreams}
 }
 
 // Add adds a fragment. Returns (payload, true, nil) when complete.
@@ -104,7 +110,11 @@ func (a *Assembler) Add(msg protocol.Message, dec *compress.Decoder) ([]byte, bo
 	}
 
 	a.mu.Lock()
-	st := a.getOrCreate(h)
+	st, err2 := a.getOrCreate(h)
+	if err2 != nil {
+		a.mu.Unlock()
+		return nil, false, err2
+	}
 	if st.frags[h.FragIndex] != nil {
 		a.mu.Unlock()
 		return nil, false, nil // duplicate, ignore
@@ -139,9 +149,12 @@ func (a *Assembler) Purge(ttl time.Duration) {
 	}
 }
 
-func (a *Assembler) getOrCreate(h protocol.Header) *streamState {
+func (a *Assembler) getOrCreate(h protocol.Header) (*streamState, error) {
 	st, ok := a.streams[h.MsgID]
 	if !ok {
+		if len(a.streams) >= a.maxStreams {
+			return nil, errors.New("chunker: too many in-flight streams")
+		}
 		st = &streamState{
 			frags:      make([][]byte, h.FragTotal),
 			total:      h.FragTotal,
@@ -150,7 +163,7 @@ func (a *Assembler) getOrCreate(h protocol.Header) *streamState {
 		}
 		a.streams[h.MsgID] = st
 	}
-	return st
+	return st, nil
 }
 
 func validateFragment(h protocol.Header, payload []byte) error {
