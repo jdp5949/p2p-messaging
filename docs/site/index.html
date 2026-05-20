@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>p2p-messaging — Direct P2P messaging in Go</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --accent:   #58a6ff;
+      --accent2:  #3fb950;
+      --warn:     #d29922;
+      --code-bg:  #1f2937;
+      --radius:   8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Header ── */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 72px 24px 64px;
+      text-align: center;
+    }
+    header .badge {
+      display: inline-block;
+      background: #1f6feb33;
+      border: 1px solid #1f6feb;
+      color: var(--accent);
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+    header .tagline {
+      margin-top: 16px;
+      font-size: 1.2rem;
+      color: var(--muted);
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    header .cta-group {
+      margin-top: 36px;
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block;
+      padding: 10px 24px;
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; text-decoration: none; }
+    .btn-primary { background: var(--accent); color: #0d1117; }
+    .btn-secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+
+    /* ── Main layout ── */
+    main { max-width: 960px; margin: 0 auto; padding: 64px 24px; }
+
+    section { margin-bottom: 72px; }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    h3 { font-size: 1.05rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
+
+    /* ── Feature cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+    .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 12px;
+      display: block;
+    }
+    .card p { color: var(--muted); font-size: 0.9rem; margin-top: 6px; }
+
+    /* ── Benchmark table ── */
+    .bench-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    thead th {
+      background: var(--surface);
+      color: var(--muted);
+      text-align: left;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+    tbody td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--surface); }
+    .num { font-variant-numeric: tabular-nums; color: var(--accent2); font-weight: 600; }
+    .caption {
+      margin-top: 10px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    /* ── Code block ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, Consolas, monospace;
+      color: #e6edf3;
+    }
+    .kw  { color: #ff7b72; }
+    .fn  { color: #d2a8ff; }
+    .str { color: #a5d6ff; }
+    .cm  { color: #8b949e; font-style: italic; }
+    .pkg { color: #79c0ff; }
+
+    /* ── Download section ── */
+    .dl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .dl-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+    }
+    .dl-card h3 { margin-bottom: 12px; }
+    .dl-card ul { list-style: none; }
+    .dl-card ul li { margin-bottom: 6px; }
+    .dl-card ul li a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.88rem;
+    }
+
+    /* ── Wire format ── */
+    .wire-table { overflow-x: auto; }
+    .wire-table table thead th { font-size: 0.72rem; }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="badge">Open Source / MIT</span>
+  <h1>p2p-messaging</h1>
+  <p class="tagline">Direct P2P messaging. No broker. No overhead.</p>
+  <div class="cta-group">
+    <a class="btn btn-primary" href="https://github.com/jdp5949/p2p-messaging/releases">Download Binary</a>
+    <a class="btn btn-secondary" href="https://github.com/jdp5949/p2p-messaging">View on GitHub</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- Features -->
+  <section>
+    <h2>Why p2p-messaging</h2>
+    <div class="cards">
+      <div class="card">
+        <span class="card-icon">&#9889;</span>
+        <h3>Fast</h3>
+        <p>Up to 32,715 msg/s at 256 B. Up to 1,016 MB/s at 64 KB. Measured on real public internet.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">&#128274;</span>
+        <h3>Reliable</h3>
+        <p>ACK/NACK per message. Exponential backoff retry. Ring-buffer replay on reconnect. No message silently dropped.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">&#128736;</span>
+        <h3>Simple</h3>
+        <p>Single Go library. No external broker process. One relay binary for NAT traversal. Binary-only dependency.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Benchmarks -->
+  <section>
+    <h2>Benchmarks</h2>
+    <div class="bench-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Message Size</th>
+            <th>Throughput</th>
+            <th>Bandwidth</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>256 B</td><td class="num">32,715 msg/s</td><td class="num">8.38 MB/s</td></tr>
+          <tr><td>1 KB</td><td class="num">7,291 msg/s</td><td class="num">7.47 MB/s</td></tr>
+          <tr><td>8 KB</td><td class="num">21,904 msg/s</td><td class="num">179 MB/s</td></tr>
+          <tr><td>64 KB</td><td class="num">15,506 msg/s</td><td class="num">1,016 MB/s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">Mac to Oracle Cloud, public internet (~80 ms RTT). Single stream, no parallelism.</p>
+  </section>
+
+  <!-- Code snippet -->
+  <section>
+    <h2>Quick Look</h2>
+    <pre><code><span class="kw">package</span> main
+
+<span class="kw">import</span> (
+    <span class="str">"context"</span>
+    <span class="str">"fmt"</span>
+    <span class="str">"log"</span>
+
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/broker"</span>
+    <span class="str">"github.com/jaypatel/p2p-messaging/pkg/conn"</span>
+)
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    <span class="cm">// Dial remote peer directly — no broker process needed</span>
+    c, err := <span class="pkg">conn</span>.<span class="fn">Dial</span>(context.<span class="fn">Background</span>(), <span class="str">"peer.example.com:9001"</span>)
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
+
+    <span class="cm">// Broker adds ACK/retry/ring-buffer guarantees</span>
+    b := <span class="pkg">broker</span>.<span class="fn">New</span>(c, <span class="pkg">broker</span>.Options{RingSize: <span class="num">10_000</span>, MaxRetries: <span class="num">5</span>})
+    <span class="kw">defer</span> b.<span class="fn">Close</span>()
+
+    <span class="cm">// Send — chunking and zstd compression handled automatically</span>
+    msgID, err := b.<span class="fn">Send</span>(context.<span class="fn">Background</span>(), []<span class="kw">byte</span>(<span class="str">"hello"</span>))
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
+    <span class="pkg">fmt</span>.<span class="fn">Println</span>(<span class="str">"sent"</span>, msgID)
+
+    <span class="cm">// Receive</span>
+    msg, err := b.<span class="fn">Recv</span>(context.<span class="fn">Background</span>())
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="pkg">log</span>.<span class="fn">Fatal</span>(err) }
+    <span class="pkg">fmt</span>.<span class="fn">Printf</span>(<span class="str">"received: %s\n"</span>, msg.Payload)
+}</code></pre>
+  </section>
+
+  <!-- Wire format -->
+  <section>
+    <h2>Wire Format</h2>
+    <p style="color:var(--muted); margin-bottom:16px;">Every frame starts with a 20-byte binary header (big-endian). Zero parsing ambiguity.</p>
+    <div class="wire-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Bytes</th>
+            <th>Field</th>
+            <th>Type</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>0–3</td><td>MsgID</td><td>uint32</td><td>Monotonic sender-assigned ID</td></tr>
+          <tr><td>4–5</td><td>MsgType</td><td>uint16</td><td>DATA / ACK / NACK / PING / PONG</td></tr>
+          <tr><td>6–7</td><td>ContentType</td><td>uint16</td><td>JSON / BINARY / TEXT / PROTO / AVRO / RAW</td></tr>
+          <tr><td>8</td><td>Flags</td><td>uint8</td><td>Compressed bit, Fragmented bit</td></tr>
+          <tr><td>9</td><td>Priority</td><td>uint8</td><td>0 (low) to 255 (high)</td></tr>
+          <tr><td>10–11</td><td>FragIndex</td><td>uint16</td><td>Position of this fragment</td></tr>
+          <tr><td>12–13</td><td>FragTotal</td><td>uint16</td><td>Total fragments in message</td></tr>
+          <tr><td>14–17</td><td>PayloadLen</td><td>uint32</td><td>Bytes that follow this header</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Download -->
+  <section>
+    <h2>Download</h2>
+    <div class="dl-grid">
+      <div class="dl-card">
+        <h3>Linux</h3>
+        <ul>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-linux-amd64">peer — linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-linux-amd64">relay — linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-linux-amd64">bench — linux/amd64</a></li>
+        </ul>
+      </div>
+      <div class="dl-card">
+        <h3>macOS</h3>
+        <ul>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-darwin-arm64">peer — darwin/arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-darwin-arm64">relay — darwin/arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-darwin-arm64">bench — darwin/arm64</a></li>
+        </ul>
+      </div>
+      <div class="dl-card">
+        <h3>Build from Source</h3>
+        <p style="color:var(--muted); font-size:0.88rem; margin-bottom:10px;">Requires Go 1.21+</p>
+        <ul>
+          <li style="font-size:0.85rem;color:var(--muted);">git clone https://github.com/jdp5949/p2p-messaging</li>
+          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/peer</li>
+          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/relay</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/jdp5949/p2p-messaging">GitHub</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://github.com/jdp5949/p2p-messaging/blob/main/LICENSE">MIT License</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://github.com/jdp5949/p2p-messaging/releases">Releases</a>
+  </p>
+  <p style="margin-top:8px;">p2p-messaging &mdash; built in Go. No broker. No overhead.</p>
+</footer>
+
+</body>
+</html>
