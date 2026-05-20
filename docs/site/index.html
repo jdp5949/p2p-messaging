@@ -375,6 +375,23 @@
     </ul>
   </section>
 
+  <!-- 2b. Use Cases -->
+  <section>
+    <h2>Use Cases</h2>
+    <ul class="benefits-list">
+      <li><strong>Microservice ↔ microservice</strong> — direct messaging without Kafka/RabbitMQ/NATS. Each service holds long-lived P2P connections.</li>
+      <li><strong>Edge → cloud telemetry</strong> — IoT devices stream metrics over encrypted P2P with WAL fallback for offline buffering.</li>
+      <li><strong>Trading / market data</strong> — low-latency binary messages with ACK guarantees, persistent across reconnects.</li>
+      <li><strong>Multi-region replication</strong> — encrypted P2P across data centers without VPN setup.</li>
+      <li><strong>Distributed agents</strong> — autonomous workers coordinate via direct messages, no central broker.</li>
+      <li><strong>File transfer (croc-style)</strong> — chunker handles GB+ files over parallel streams + zstd compression.</li>
+      <li><strong>Gaming / real-time control</strong> — TCP_NODELAY + small msgs + NAT hole-punch through residential networks.</li>
+      <li><strong>CLI tool ↔ tool</strong> — bench, peer, relay binaries can be composed into pipelines.</li>
+      <li><strong>Chat / messaging</strong> — text content type + sentinel + persistence = at-least-once messaging without a central server.</li>
+      <li><strong>Embedded systems</strong> — single Go binary, small footprint (~5 MB), runs on ARM/x86/anywhere Go runs.</li>
+    </ul>
+  </section>
+
   <!-- 3. Getting Started -->
   <section>
     <h2>Getting Started</h2>
