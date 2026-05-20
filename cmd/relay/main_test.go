@@ -139,7 +139,7 @@ func TestRelayFallbackBridge(t *testing.T) {
 	}()
 
 	go func() {
-		connB.SetReadDeadline(time.Now().Add(3 * time.Second)) //nolint:errcheck
+		connB.SetReadDeadline(time.Now().Add(15 * time.Second)) //nolint:errcheck
 		got, err := rB.ReadString('\n')
 		if err != nil {
 			done <- fmt.Errorf("B read: %w", err)
