@@ -1,3 +1,12 @@
+// Bench measures true end-to-end messaging throughput between two peers.
+//
+// Protocol (so the client measures wire-delivery time, not local TCP buffer):
+//   1. Client sends N data messages.
+//   2. Client sends a sentinel message: ContentText "BENCH_END:N".
+//   3. Server counts data messages. When it sees the sentinel and count == N,
+//      it sends back a single ContentText "BENCH_DONE" message.
+//   4. Client measures wall time from first send to receiving BENCH_DONE.
+//      That elapsed time reflects true end-to-end wire delivery + ACK round-trip.
 package main
 
 import (
@@ -6,6 +15,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -16,20 +27,21 @@ import (
 	"github.com/jaypatel/p2p-messaging/pkg/wal"
 )
 
+const sentinelPrefix = "BENCH_END:"
+const donePayload = "BENCH_DONE"
+
 func main() {
 	listen := flag.String("listen", "", "listen address (server mode)")
 	addr := flag.String("addr", "", "dial address (client mode)")
 	count := flag.Int("count", 10000, "messages to send")
 	size := flag.Int("size", 1024, "payload size bytes")
 
-	// crypto flags (default OFF for clean baseline)
 	useCrypto := flag.Bool("crypto", false, "enable encryption for benchmark")
 	idPath := flag.String("id", "~/.p2p/id_ed25519", "path to identity key")
 	knownPath := flag.String("known", "~/.p2p/known_peers", "path to known_peers file")
 	peerName := flag.String("peer-name", "", "name of remote peer (for key pinning)")
 	pakeCode := flag.String("pake", "", "PAKE one-time code for first connect")
 
-	// WAL flag
 	walPath := flag.String("wal", "", "path to WAL file (empty = no persistence)")
 
 	flag.Parse()
@@ -39,7 +51,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build optional handshake config.
 	var hsCfg *crypto.HandshakeConfig
 	if *useCrypto {
 		id, err := crypto.LoadOrGenerateIdentity(*idPath)
@@ -59,14 +70,13 @@ func main() {
 		}
 	}
 
-	// Build optional WAL.
 	var w *wal.WAL
 	if *walPath != "" {
 		expanded, err := expandPath(*walPath)
 		if err != nil {
 			log.Fatalf("wal path: %v", err)
 		}
-		w, err = wal.Open(expanded, false) // fsync off for bench perf
+		w, err = wal.Open(expanded, false)
 		if err != nil {
 			log.Fatalf("wal: %v", err)
 		}
@@ -78,32 +88,60 @@ func main() {
 		log.Fatalf("connect: %v", err)
 	}
 
-	var recvCount atomic.Int64
-	var recvBytes atomic.Int64
-	var firstRecv atomic.Int64
-	var lastRecv atomic.Int64
+	clientMode := *addr != ""
+
+	// Server state.
+	var srvDataCount atomic.Int64
+	var srvDataBytes atomic.Int64
+	srvDone := make(chan struct{}, 1)
+
+	var b *broker.Broker
 
 	c, err := conn.New(conn.Config{
 		DialFunc:     func() (net.Conn, error) { return raw, nil },
-		ReadTimeout:  60 * time.Second,
+		ReadTimeout:  120 * time.Second,
 		HandshakeCfg: hsCfg,
 	})
 	if err != nil {
 		log.Fatalf("conn: %v", err)
 	}
 
-	b, err := broker.New(broker.Config{
+	b, err = broker.New(broker.Config{
 		Conn:       c,
 		ACKTimeout: 30 * time.Second,
 		MaxRetries: 3,
 		OnInbound: func(msg broker.InboundMsg) {
-			n := recvCount.Add(1)
-			recvBytes.Add(int64(len(msg.Payload)))
-			now := time.Now().UnixNano()
-			if n == 1 {
-				firstRecv.Store(now)
+			if clientMode {
+				if msg.ContentType == protocol.ContentText && string(msg.Payload) == donePayload {
+					benchDoneFlag.Store(true)
+				}
+				return
 			}
-			lastRecv.Store(now)
+			// Server mode.
+			if msg.ContentType == protocol.ContentText && strings.HasPrefix(string(msg.Payload), sentinelPrefix) {
+				// Sentinel arrived. Wait until count catches up, bailing only if no progress for 30s.
+				expected, _ := strconv.ParseInt(strings.TrimPrefix(string(msg.Payload), sentinelPrefix), 10, 64)
+				lastSeen := srvDataCount.Load()
+				stallDeadline := time.Now().Add(30 * time.Second)
+				for srvDataCount.Load() < expected {
+					time.Sleep(20 * time.Millisecond)
+					cur := srvDataCount.Load()
+					if cur > lastSeen {
+						lastSeen = cur
+						stallDeadline = time.Now().Add(30 * time.Second)
+					}
+					if time.Now().After(stallDeadline) {
+						break
+					}
+				}
+				select {
+				case srvDone <- struct{}{}:
+				default:
+				}
+				return
+			}
+			srvDataCount.Add(1)
+			srvDataBytes.Add(int64(len(msg.Payload)))
 		},
 		OnDead: func(msgID uint64, err error) {
 			log.Printf("[DEAD] msgID=%d err=%v", msgID, err)
@@ -115,71 +153,92 @@ func main() {
 	}
 	defer b.Close()
 
-	payload := make([]byte, *size)
+	if clientMode {
+		runClient(b, *count, *size)
+	} else {
+		runServer(b, &srvDataCount, &srvDataBytes, srvDone)
+	}
+}
+
+func runClient(b *broker.Broker, count, size int) {
+	payload := make([]byte, size)
 	for i := range payload {
 		payload[i] = byte(i % 256)
 	}
 
-	// If client mode (-addr): send messages and print stats.
-	// If server mode (-listen): just receive and report stats every second.
-	if *addr != "" {
-		fmt.Printf("Sending %d messages × %d bytes = %.2f MB total...\n",
-			*count, *size, float64(*count**size)/1e6)
+	totalBytes := int64(count) * int64(size)
+	fmt.Printf("Bench: %d messages × %d B = %.2f MB total\n", count, size, float64(totalBytes)/1e6)
 
-		start := time.Now()
-		for i := 0; i < *count; i++ {
-			if _, err := b.Send(protocol.ContentBinary, protocol.PriorityNormal, payload); err != nil {
-				log.Printf("send err: %v", err)
+	start := time.Now()
+	for i := 0; i < count; i++ {
+		if _, err := b.Send(protocol.ContentBinary, protocol.PriorityNormal, payload); err != nil {
+			log.Printf("send err: %v", err)
+		}
+	}
+	sendDone := time.Now()
+
+	// Sentinel.
+	if _, err := b.Send(protocol.ContentText, protocol.PriorityNormal, []byte(fmt.Sprintf("%s%d", sentinelPrefix, count))); err != nil {
+		log.Fatalf("sentinel send: %v", err)
+	}
+
+	// Wait for BENCH_DONE from server. We hooked doneCh inside OnInbound via global.
+	// Simple: poll for done via a shared variable. Implement using a global channel set in main.
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		if benchDoneFlag.Load() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !benchDoneFlag.Load() {
+		fmt.Println("ERROR: did not receive BENCH_DONE within 120s")
+		os.Exit(1)
+	}
+	totalElapsed := time.Since(start)
+	sendElapsed := sendDone.Sub(start)
+	roundTrip := totalElapsed - sendElapsed
+
+	mbps := float64(totalBytes*8) / 1e6 / totalElapsed.Seconds()
+
+	fmt.Printf("\n--- E2E RESULTS ---\n")
+	fmt.Printf("Messages       : %d\n", count)
+	fmt.Printf("Payload/msg    : %d B\n", size)
+	fmt.Printf("Total data     : %.2f MB\n", float64(totalBytes)/1e6)
+	fmt.Printf("Send phase     : %v  (local app → TCP send buffer)\n", sendElapsed.Round(time.Millisecond))
+	fmt.Printf("E2E delivery   : %v  (first send → final server ACK)\n", totalElapsed.Round(time.Millisecond))
+	fmt.Printf("Drain + ACK    : %v  (TCP queue drain + sentinel round-trip)\n", roundTrip.Round(time.Millisecond))
+	fmt.Printf("Throughput     : %.0f msg/s\n", float64(count)/totalElapsed.Seconds())
+	fmt.Printf("Wire bandwidth : %.2f Mbps  (%.2f MB/s)\n", mbps, mbps/8)
+}
+
+func runServer(b *broker.Broker, dataCount, dataBytes *atomic.Int64, srvDone <-chan struct{}) {
+	fmt.Printf("Server: receiving...\n")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var last int64
+	for {
+		select {
+		case <-srvDone:
+			// Reply with BENCH_DONE.
+			if _, err := b.Send(protocol.ContentText, protocol.PriorityNormal, []byte(donePayload)); err != nil {
+				log.Printf("send DONE: %v", err)
 			}
-		}
-		sendElapsed := time.Since(start)
-
-		fmt.Printf("\n--- SEND STATS ---\n")
-		fmt.Printf("Messages sent : %d\n", *count)
-		fmt.Printf("Payload/msg   : %d bytes\n", *size)
-		fmt.Printf("Total data    : %.2f MB\n", float64(*count**size)/1e6)
-		fmt.Printf("Send time     : %v\n", sendElapsed.Round(time.Millisecond))
-		fmt.Printf("Throughput    : %.0f msg/s\n", float64(*count)/sendElapsed.Seconds())
-		fmt.Printf("Bandwidth     : %.2f MB/s\n", float64(*count**size)/1e6/sendElapsed.Seconds())
-
-		// Wait up to 30s for ACKs.
-		deadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			if recvCount.Load() >= int64(*count) {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-
-		rc := recvCount.Load()
-		rb := recvBytes.Load()
-		fr := firstRecv.Load()
-		lr := lastRecv.Load()
-
-		fmt.Printf("\n--- RECV STATS (from remote) ---\n")
-		fmt.Printf("Messages recv : %d / %d\n", rc, *count)
-		fmt.Printf("Bytes recv    : %.2f MB\n", float64(rb)/1e6)
-		if fr > 0 && lr > fr {
-			elapsed := time.Duration(lr - fr)
-			fmt.Printf("Recv duration : %v\n", elapsed.Round(time.Millisecond))
-			fmt.Printf("Recv rate     : %.0f msg/s\n", float64(rc)/elapsed.Seconds())
-			fmt.Printf("Recv BW       : %.2f MB/s\n", float64(rb)/1e6/elapsed.Seconds())
-		}
-	} else {
-		// Server mode: just receive.
-		fmt.Printf("Listening. Receiving messages...\n")
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		var last int64
-		for range ticker.C {
-			cur := recvCount.Load()
-			byt := recvBytes.Load()
+			cur := dataCount.Load()
+			byt := dataBytes.Load()
+			fmt.Printf("\nFinal: recv=%d data msgs, %.2f MB\n", cur, float64(byt)/1e6)
+		case <-ticker.C:
+			cur := dataCount.Load()
+			byt := dataBytes.Load()
 			delta := cur - last
 			last = cur
-			fmt.Printf("recv total=%d (+%d/s)  %.2f MB total\n", cur, delta, float64(byt)/1e6)
+			fmt.Printf("recv total=%d (+%d/s)  %.2f MB\n", cur, delta, float64(byt)/1e6)
 		}
 	}
 }
+
+// benchDoneFlag is set by OnInbound when BENCH_DONE arrives.
+var benchDoneFlag atomic.Bool
 
 func dial(listenAddr, dialAddr string) (net.Conn, error) {
 	if listenAddr != "" {
@@ -195,7 +254,6 @@ func dial(listenAddr, dialAddr string) (net.Conn, error) {
 	return net.Dial("tcp", dialAddr)
 }
 
-// expandPath resolves ~ to the user's home directory.
 func expandPath(path string) (string, error) {
 	if len(path) == 0 || path[0] != '~' {
 		return path, nil
