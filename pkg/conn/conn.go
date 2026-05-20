@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jaypatel/p2p-messaging/pkg/crypto"
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
 )
 
@@ -18,14 +19,19 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	PingInterval time.Duration
+
+	// HandshakeCfg: if set, wraps the raw net.Conn in an encrypted crypto.Session.
+	// nil = plaintext (backward compatible).
+	HandshakeCfg *crypto.HandshakeConfig
 }
 
 // Conn wraps a net.Conn with framed read/write and reconnect support.
 type Conn struct {
-	cfg      Config
-	mu       sync.Mutex
-	raw      net.Conn
-	stopPing chan struct{}
+	cfg       Config
+	mu        sync.Mutex
+	raw       net.Conn
+	transport io.ReadWriteCloser // raw conn or encrypted session
+	stopPing  chan struct{}
 }
 
 // New dials immediately and returns a ready Conn.
@@ -34,15 +40,29 @@ func New(cfg Config) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport, err := buildTransport(raw, cfg.HandshakeCfg)
+	if err != nil {
+		raw.Close()
+		return nil, err
+	}
 	c := &Conn{
-		cfg:      cfg,
-		raw:      raw,
-		stopPing: make(chan struct{}),
+		cfg:       cfg,
+		raw:       raw,
+		transport: transport,
+		stopPing:  make(chan struct{}),
 	}
 	if cfg.PingInterval > 0 {
 		go c.pingLoop()
 	}
 	return c, nil
+}
+
+// buildTransport wraps raw with a crypto.Session if cfg is non-nil.
+func buildTransport(raw net.Conn, hsCfg *crypto.HandshakeConfig) (io.ReadWriteCloser, error) {
+	if hsCfg == nil {
+		return raw, nil
+	}
+	return crypto.Handshake(raw, *hsCfg)
 }
 
 // WriteMsg encodes and writes a framed message. Thread-safe.
@@ -53,16 +73,15 @@ func (c *Conn) WriteMsg(msg protocol.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	raw := c.raw
 	if c.cfg.WriteTimeout > 0 {
-		_ = raw.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
+		_ = c.raw.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
 	}
 
-	if _, err := raw.Write(hdr[:]); err != nil {
+	if _, err := c.transport.Write(hdr[:]); err != nil {
 		return err
 	}
 	if len(msg.Payload) > 0 {
-		if _, err := raw.Write(msg.Payload); err != nil {
+		if _, err := c.transport.Write(msg.Payload); err != nil {
 			return err
 		}
 	}
@@ -72,14 +91,14 @@ func (c *Conn) WriteMsg(msg protocol.Message) error {
 // ReadMsg reads one framed message. Single-goroutine reader only.
 func (c *Conn) ReadMsg() (protocol.Message, error) {
 	c.mu.Lock()
-	raw := c.raw
 	if c.cfg.ReadTimeout > 0 {
-		_ = raw.SetReadDeadline(time.Now().Add(c.cfg.ReadTimeout))
+		_ = c.raw.SetReadDeadline(time.Now().Add(c.cfg.ReadTimeout))
 	}
+	transport := c.transport
 	c.mu.Unlock()
 
 	var hdrBuf [protocol.HeaderSize]byte
-	if _, err := io.ReadFull(raw, hdrBuf[:]); err != nil {
+	if _, err := io.ReadFull(transport, hdrBuf[:]); err != nil {
 		return protocol.Message{}, err
 	}
 
@@ -91,7 +110,7 @@ func (c *Conn) ReadMsg() (protocol.Message, error) {
 
 	if hdr.PayloadLen > 0 {
 		msg.Payload = make([]byte, hdr.PayloadLen)
-		if _, err := io.ReadFull(raw, msg.Payload); err != nil {
+		if _, err := io.ReadFull(transport, msg.Payload); err != nil {
 			return protocol.Message{}, err
 		}
 	}
@@ -104,11 +123,17 @@ func (c *Conn) Reconnect() error {
 	if err != nil {
 		return err
 	}
+	transport, err := buildTransport(raw, c.cfg.HandshakeCfg)
+	if err != nil {
+		raw.Close()
+		return err
+	}
 	c.mu.Lock()
-	old := c.raw
+	oldTransport := c.transport
 	c.raw = raw
+	c.transport = transport
 	c.mu.Unlock()
-	_ = old.Close()
+	_ = oldTransport.Close()
 	return nil
 }
 
@@ -121,7 +146,7 @@ func (c *Conn) Close() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.raw.Close()
+	return c.transport.Close()
 }
 
 // LocalAddr returns the local network address.

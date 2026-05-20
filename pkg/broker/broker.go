@@ -13,6 +13,7 @@ import (
 	"github.com/jaypatel/p2p-messaging/pkg/compress"
 	"github.com/jaypatel/p2p-messaging/pkg/conn"
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jaypatel/p2p-messaging/pkg/wal"
 )
 
 const (
@@ -37,6 +38,10 @@ type Config struct {
 	OnInbound    func(InboundMsg)
 	OnDead       func(msgID uint64, err error)
 	PingInterval time.Duration
+
+	// WAL: optional write-ahead log for crash-recovery of unacked outbound messages.
+	// nil = in-memory only (backward compatible).
+	WAL *wal.WAL
 }
 
 // slot tracks one in-flight message in the ring buffer.
@@ -62,6 +67,7 @@ type Broker struct {
 	ringLen int
 
 	msgIDCounter uint64
+	ackCount     uint64 // counts acks for WAL compact trigger
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -99,7 +105,15 @@ func New(cfg Config) (*Broker, error) {
 		assemb:  chunker.NewAssembler(),
 		ring:    make([]slot, cfg.RetryBuffer),
 		ringLen: cfg.RetryBuffer,
-		stop: make(chan struct{}),
+		stop:    make(chan struct{}),
+	}
+
+	if cfg.WAL != nil {
+		if err := b.replayWAL(); err != nil {
+			return nil, err
+		}
+		b.wg.Add(1)
+		go b.walCompactLoop()
 	}
 
 	b.wg.Add(1)
@@ -108,6 +122,62 @@ func New(cfg Config) (*Broker, error) {
 	go b.retryLoop()
 
 	return b, nil
+}
+
+// replayWAL re-enqueues unacked entries from the WAL into the ring buffer.
+func (b *Broker) replayWAL() error {
+	entries, err := b.cfg.WAL.Replay()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		ct, priority, payload := unpackWALPayload(e.Payload)
+		frags, err := chunker.Split(e.MsgID, ct, payload, b.enc)
+		if err != nil {
+			continue
+		}
+		for i := range frags {
+			frags[i].Header.Priority = priority
+		}
+		_ = b.enqueue(e.MsgID, frags)
+		// Advance counter so new sends don't reuse replayed IDs.
+		if e.MsgID > atomic.LoadUint64(&b.msgIDCounter) {
+			atomic.StoreUint64(&b.msgIDCounter, e.MsgID)
+		}
+	}
+	return nil
+}
+
+// walCompactLoop runs WAL.Compact() every minute.
+func (b *Broker) walCompactLoop() {
+	defer b.wg.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.stop:
+			return
+		case <-ticker.C:
+			_ = b.cfg.WAL.Compact()
+		}
+	}
+}
+
+// packWALPayload encodes [ContentType:1][Priority:1][payload...] for WAL storage.
+func packWALPayload(ct protocol.ContentType, priority protocol.Priority, payload []byte) []byte {
+	buf := make([]byte, 2+len(payload))
+	buf[0] = byte(ct)
+	buf[1] = byte(priority)
+	copy(buf[2:], payload)
+	return buf
+}
+
+// unpackWALPayload decodes a packed WAL payload.
+func unpackWALPayload(packed []byte) (protocol.ContentType, protocol.Priority, []byte) {
+	if len(packed) < 2 {
+		return protocol.ContentText, protocol.PriorityNormal, packed
+	}
+	return protocol.ContentType(packed[0]), protocol.Priority(packed[1]), packed[2:]
 }
 
 // Send enqueues a message for delivery.
@@ -124,6 +194,15 @@ func (b *Broker) Send(ct protocol.ContentType, priority protocol.Priority, paylo
 
 	if err := b.enqueue(msgID, frags); err != nil {
 		return 0, err
+	}
+
+	// WAL append BEFORE network write for crash safety.
+	if b.cfg.WAL != nil {
+		packed := packWALPayload(ct, priority, payload)
+		if err := b.cfg.WAL.Append(msgID, packed); err != nil {
+			b.freeSlot(msgID)
+			return 0, err
+		}
 	}
 
 	for _, f := range frags {
@@ -185,6 +264,10 @@ func (b *Broker) freeSlot(msgID uint64) {
 	for i := range b.ring {
 		if b.ring[i].active && b.ring[i].msgID == msgID {
 			b.ring[i].active = false
+			if b.cfg.WAL != nil {
+				_ = b.cfg.WAL.Ack(msgID)
+				atomic.AddUint64(&b.ackCount, 1)
+			}
 			return
 		}
 	}

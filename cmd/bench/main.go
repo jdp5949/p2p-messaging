@@ -11,7 +11,9 @@ import (
 
 	"github.com/jaypatel/p2p-messaging/pkg/broker"
 	"github.com/jaypatel/p2p-messaging/pkg/conn"
+	"github.com/jaypatel/p2p-messaging/pkg/crypto"
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jaypatel/p2p-messaging/pkg/wal"
 )
 
 func main() {
@@ -19,11 +21,56 @@ func main() {
 	addr := flag.String("addr", "", "dial address (client mode)")
 	count := flag.Int("count", 10000, "messages to send")
 	size := flag.Int("size", 1024, "payload size bytes")
+
+	// crypto flags (default OFF for clean baseline)
+	useCrypto := flag.Bool("crypto", false, "enable encryption for benchmark")
+	idPath := flag.String("id", "~/.p2p/id_ed25519", "path to identity key")
+	knownPath := flag.String("known", "~/.p2p/known_peers", "path to known_peers file")
+	peerName := flag.String("peer-name", "", "name of remote peer (for key pinning)")
+	pakeCode := flag.String("pake", "", "PAKE one-time code for first connect")
+
+	// WAL flag
+	walPath := flag.String("wal", "", "path to WAL file (empty = no persistence)")
+
 	flag.Parse()
 
 	if *listen == "" && *addr == "" {
 		fmt.Fprintln(os.Stderr, "usage: bench -listen :9100 OR bench -addr host:9100")
 		os.Exit(1)
+	}
+
+	// Build optional handshake config.
+	var hsCfg *crypto.HandshakeConfig
+	if *useCrypto {
+		id, err := crypto.LoadOrGenerateIdentity(*idPath)
+		if err != nil {
+			log.Fatalf("identity: %v", err)
+		}
+		kp, err := crypto.LoadKnownPeers(*knownPath)
+		if err != nil {
+			log.Fatalf("known_peers: %v", err)
+		}
+		hsCfg = &crypto.HandshakeConfig{
+			Identity:   id,
+			KnownPeers: kp,
+			PeerName:   *peerName,
+			PAKECode:   *pakeCode,
+			Initiator:  *addr != "",
+		}
+	}
+
+	// Build optional WAL.
+	var w *wal.WAL
+	if *walPath != "" {
+		expanded, err := expandPath(*walPath)
+		if err != nil {
+			log.Fatalf("wal path: %v", err)
+		}
+		w, err = wal.Open(expanded, false) // fsync off for bench perf
+		if err != nil {
+			log.Fatalf("wal: %v", err)
+		}
+		defer w.Close()
 	}
 
 	raw, err := dial(*listen, *addr)
@@ -37,8 +84,9 @@ func main() {
 	var lastRecv atomic.Int64
 
 	c, err := conn.New(conn.Config{
-		DialFunc:    func() (net.Conn, error) { return raw, nil },
-		ReadTimeout: 60 * time.Second,
+		DialFunc:     func() (net.Conn, error) { return raw, nil },
+		ReadTimeout:  60 * time.Second,
+		HandshakeCfg: hsCfg,
 	})
 	if err != nil {
 		log.Fatalf("conn: %v", err)
@@ -60,6 +108,7 @@ func main() {
 		OnDead: func(msgID uint64, err error) {
 			log.Printf("[DEAD] msgID=%d err=%v", msgID, err)
 		},
+		WAL: w,
 	})
 	if err != nil {
 		log.Fatalf("broker: %v", err)
@@ -144,4 +193,16 @@ func dial(listenAddr, dialAddr string) (net.Conn, error) {
 		return c, err
 	}
 	return net.Dial("tcp", dialAddr)
+}
+
+// expandPath resolves ~ to the user's home directory.
+func expandPath(path string) (string, error) {
+	if len(path) == 0 || path[0] != '~' {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return home + path[1:], nil
 }

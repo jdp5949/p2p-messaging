@@ -12,7 +12,9 @@ import (
 
 	"github.com/jaypatel/p2p-messaging/pkg/broker"
 	"github.com/jaypatel/p2p-messaging/pkg/conn"
+	"github.com/jaypatel/p2p-messaging/pkg/crypto"
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jaypatel/p2p-messaging/pkg/wal"
 )
 
 func main() {
@@ -21,11 +23,60 @@ func main() {
 	mode := flag.String("mode", "text", "text or binary")
 	ping := flag.Duration("ping", 10*time.Second, "ping interval")
 	timeout := flag.Duration("timeout", 30*time.Second, "ACK timeout")
+
+	// crypto flags
+	idPath := flag.String("id", "~/.p2p/id_ed25519", "path to identity key")
+	knownPath := flag.String("known", "~/.p2p/known_peers", "path to known_peers file")
+	peerName := flag.String("peer-name", "", "name of remote peer (for key pinning)")
+	pakeCode := flag.String("pake", "", "PAKE one-time code for first connect")
+	noCrypto := flag.Bool("no-crypto", false, "disable encryption (plaintext)")
+
+	// WAL flag
+	walPath := flag.String("wal", "", "path to WAL file (empty = no persistence)")
+
 	flag.Parse()
 
 	if *addr == "" && *listen == "" {
 		fmt.Fprintln(os.Stderr, "peer: must set -addr or -listen")
 		os.Exit(1)
+	}
+
+	// Build handshake config if crypto enabled.
+	var hsCfg *crypto.HandshakeConfig
+	if !*noCrypto {
+		id, err := crypto.LoadOrGenerateIdentity(*idPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "peer: identity: %v\n", err)
+			os.Exit(1)
+		}
+		kp, err := crypto.LoadKnownPeers(*knownPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "peer: known_peers: %v\n", err)
+			os.Exit(1)
+		}
+		hsCfg = &crypto.HandshakeConfig{
+			Identity:   id,
+			KnownPeers: kp,
+			PeerName:   *peerName,
+			PAKECode:   *pakeCode,
+			Initiator:  *addr != "",
+		}
+	}
+
+	// Build optional WAL.
+	var w *wal.WAL
+	if *walPath != "" {
+		expanded, err := expandPath(*walPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "peer: wal path: %v\n", err)
+			os.Exit(1)
+		}
+		w, err = wal.Open(expanded, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "peer: wal: %v\n", err)
+			os.Exit(1)
+		}
+		defer w.Close()
 	}
 
 	netConn, err := dial(*listen, *addr)
@@ -39,6 +90,7 @@ func main() {
 		ReadTimeout:  *timeout,
 		WriteTimeout: *timeout,
 		PingInterval: *ping,
+		HandshakeCfg: hsCfg,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "peer: conn.New: %v\n", err)
@@ -55,6 +107,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "[DEAD msgID=%d] %v\n", msgID, e)
 		},
 		PingInterval: *ping,
+		WAL:          w,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "peer: broker.New: %v\n", err)
@@ -70,6 +123,18 @@ func main() {
 
 	_ = b.Close()
 	<-done
+}
+
+// expandPath resolves ~ to the user's home directory.
+func expandPath(path string) (string, error) {
+	if len(path) == 0 || path[0] != '~' {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return home + path[1:], nil
 }
 
 func dial(listenAddr, remoteAddr string) (net.Conn, error) {
