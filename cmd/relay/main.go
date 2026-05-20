@@ -168,18 +168,22 @@ func coordinate(first, second *readyPeer, sessionID string) {
 	log.Printf("[RELAY] session=%s START sent", sessionID)
 
 	// Collect punch results.
-	type res struct{ ok bool }
+	type res struct {
+		ok bool
+		r  *bufio.Reader // reader retained to drain buffered bytes into bridge
+	}
 	ch := make(chan res, 2)
 
 	readResult := func(conn net.Conn, r *bufio.Reader) {
 		conn.SetReadDeadline(time.Now().Add(punchReportTimeout)) //nolint:errcheck
 		line, err := r.ReadString('\n')
 		ok := err == nil && strings.TrimRight(line, "\r\n") == "PUNCH_OK"
-		ch <- res{ok}
+		ch <- res{ok, r}
 	}
 
+	bReader := bufio.NewReader(b)
 	go readResult(a, first.reader)
-	go readResult(b, bufio.NewReader(b))
+	go readResult(b, bReader)
 
 	r1 := <-ch
 	r2 := <-ch
@@ -195,7 +199,31 @@ func coordinate(first, second *readyPeer, sessionID string) {
 	// Reset deadlines before bridging.
 	a.SetDeadline(time.Time{}) //nolint:errcheck
 	b.SetDeadline(time.Time{}) //nolint:errcheck
-	bridge(a, b, sessionID)
+	// Pass bufio readers so any buffered bytes after PUNCH_FAIL flow through bridge.
+	bridge2(a, b, first.reader, bReader, sessionID)
+}
+
+// bridge2 forwards bytes between a and b, using bufio.Readers that may already
+// contain buffered data (read during the PUNCH result phase).
+func bridge2(a, b net.Conn, rA, rB *bufio.Reader, sessionID string) {
+	defer a.Close()
+	defer b.Close()
+
+	type halfCloser interface{ CloseWrite() error }
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	pipe := func(dst net.Conn, src io.Reader) {
+		defer wg.Done()
+		io.Copy(dst, src)
+		if hc, ok := dst.(halfCloser); ok {
+			hc.CloseWrite()
+		}
+	}
+	go pipe(b, rA)
+	go pipe(a, rB)
+	wg.Wait()
+	log.Printf("[RELAY] session=%s bridge closed", sessionID)
 }
 
 func bridge(a, b net.Conn, sessionID string) {
