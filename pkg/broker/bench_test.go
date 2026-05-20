@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/jaypatel/p2p-messaging/pkg/conn"
 	"github.com/jaypatel/p2p-messaging/pkg/protocol"
@@ -12,10 +13,15 @@ import (
 // benchBroker creates a broker backed by a loopback pipe with an auto-ACK server.
 func benchBroker(b *testing.B) (*Broker, func()) {
 	b.Helper()
+	return benchBrokerCfg(b, conn.Config{})
+}
+
+// benchBrokerCfg creates a broker with a custom conn.Config.
+func benchBrokerCfg(b *testing.B, connCfg conn.Config) (*Broker, func()) {
+	b.Helper()
 	clientRaw, srvRaw := net.Pipe()
-	c, err := conn.New(conn.Config{
-		DialFunc: func() (net.Conn, error) { return clientRaw, nil },
-	})
+	connCfg.DialFunc = func() (net.Conn, error) { return clientRaw, nil }
+	c, err := conn.New(connCfg)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -64,6 +70,22 @@ func benchBroker(b *testing.B) (*Broker, func()) {
 
 func BenchmarkSend1KB(b *testing.B) {
 	br, cleanup := benchBroker(b)
+	defer cleanup()
+	payload := make([]byte, 1024)
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := br.Send(protocol.ContentRaw, protocol.PriorityNormal, payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSendBatched1KB(b *testing.B) {
+	br, cleanup := benchBrokerCfg(b, conn.Config{
+		BatchSize:    64 * 1024,
+		BatchTimeout: 5 * time.Millisecond,
+	})
 	defer cleanup()
 	payload := make([]byte, 1024)
 	b.SetBytes(int64(len(payload)))

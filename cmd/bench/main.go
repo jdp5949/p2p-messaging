@@ -44,6 +44,9 @@ func main() {
 
 	walPath := flag.String("wal", "", "path to WAL file (empty = no persistence)")
 
+	batchSize := flag.Int("batch-size", 0, "bufio batch size in bytes (0 = no batching)")
+	batchTimeout := flag.Duration("batch-timeout", 5*time.Millisecond, "batch flush interval (used when batch-size > 0)")
+
 	flag.Parse()
 
 	if *listen == "" && *addr == "" {
@@ -101,6 +104,8 @@ func main() {
 		DialFunc:     func() (net.Conn, error) { return raw, nil },
 		ReadTimeout:  120 * time.Second,
 		HandshakeCfg: hsCfg,
+		BatchSize:    *batchSize,
+		BatchTimeout: *batchTimeout,
 	})
 	if err != nil {
 		log.Fatalf("conn: %v", err)
