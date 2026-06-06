@@ -22,6 +22,12 @@ const (
 	DefaultMaxRetries  = 5
 )
 
+// DefaultReconnectDelays spans ~60s before giving up.
+var DefaultReconnectDelays = []time.Duration{
+	1 * time.Second, 2 * time.Second, 4 * time.Second,
+	8 * time.Second, 15 * time.Second, 30 * time.Second,
+}
+
 // InboundMsg is a fully reassembled message delivered to the app.
 type InboundMsg struct {
 	MsgID       uint64
@@ -38,6 +44,14 @@ type Config struct {
 	OnInbound    func(InboundMsg)
 	OnDead       func(msgID uint64, err error)
 	PingInterval time.Duration
+
+	// ReconnectDelays is the backoff schedule for reconnect attempts after a
+	// connection drop. When exhausted without success, OnReconnectFailed is
+	// invoked and the read loop stops. nil = DefaultReconnectDelays.
+	ReconnectDelays []time.Duration
+
+	// OnReconnectFailed is called once when all ReconnectDelays are exhausted.
+	OnReconnectFailed func()
 
 	// WAL: optional write-ahead log for crash-recovery of unacked outbound messages.
 	// nil = in-memory only (backward compatible).
@@ -88,6 +102,9 @@ func New(cfg Config) (*Broker, error) {
 	}
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = DefaultMaxRetries
+	}
+	if cfg.ReconnectDelays == nil {
+		cfg.ReconnectDelays = DefaultReconnectDelays
 	}
 
 	enc, err := compress.NewEncoder()
@@ -289,7 +306,7 @@ func (b *Broker) freeSlot(msgID uint64) {
 // readLoop reads messages from the connection.
 func (b *Broker) readLoop() {
 	defer b.wg.Done()
-	reconnectDelays := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second}
+	reconnectDelays := b.cfg.ReconnectDelays
 
 	for {
 		select {
@@ -307,7 +324,12 @@ func (b *Broker) readLoop() {
 			}
 
 			if isConnError(err) {
-				b.handleReconnect(reconnectDelays)
+				if !b.handleReconnect(reconnectDelays) {
+					if b.cfg.OnReconnectFailed != nil {
+						b.cfg.OnReconnectFailed()
+					}
+					return
+				}
 			}
 			continue
 		}
@@ -331,21 +353,26 @@ func isConnError(err error) bool {
 }
 
 // handleReconnect attempts reconnect with backoff, then replays unacked slots.
-func (b *Broker) handleReconnect(delays []time.Duration) {
+// Returns true if a reconnect succeeded.
+func (b *Broker) handleReconnect(delays []time.Duration) bool {
+	if b.conn == nil {
+		return false
+	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for _, d := range delays {
 		timer.Reset(d)
 		select {
 		case <-b.stop:
-			return
+			return false
 		case <-timer.C:
 		}
 		if err := b.conn.Reconnect(); err == nil {
 			b.replayUnacked()
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // replayUnacked resends all active (unacked) slots after reconnect.

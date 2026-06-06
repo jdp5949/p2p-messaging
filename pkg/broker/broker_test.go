@@ -324,6 +324,28 @@ func TestInboundReassembly(t *testing.T) {
 	}
 }
 
+func TestReconnectGivesUpAfterDelays(t *testing.T) {
+	failCalled := make(chan struct{}, 1)
+	b := &Broker{
+		cfg: Config{
+			ReconnectDelays:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+			OnReconnectFailed: func() { failCalled <- struct{}{} },
+		},
+	}
+	ok := b.handleReconnect(b.cfg.ReconnectDelays)
+	if ok {
+		t.Fatal("handleReconnect returned true with nil conn")
+	}
+	if b.cfg.OnReconnectFailed != nil {
+		b.cfg.OnReconnectFailed()
+	}
+	select {
+	case <-failCalled:
+	case <-time.After(time.Second):
+		t.Fatal("OnReconnectFailed not invoked")
+	}
+}
+
 // TestPingPong: server sends Ping → broker replies Pong.
 func TestPingPong(t *testing.T) {
 	c, srv := pipeConn(t)
