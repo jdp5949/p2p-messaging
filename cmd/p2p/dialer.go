@@ -10,8 +10,16 @@ import (
 	"github.com/jdp5949/p2p-messaging/pkg/rendezvous"
 )
 
+// directReconnectTimeout bounds the best-effort direct dial on reconnect so it
+// cannot starve the re-rendezvous fallback that follows it.
+const directReconnectTimeout = 2 * time.Second
+
 // sessionDialer produces net.Conns for conn.Conn. The first call performs a
-// full rendezvous; later calls try the remembered partner directly first.
+// full relay rendezvous + hole-punch. On reconnect it makes a quick best-effort
+// direct dial to the remembered partner address (succeeds only if that peer
+// happens to be directly reachable, e.g. on a LAN or with a public listener),
+// then falls back to a fresh re-rendezvous — which is the reliable path through
+// NAT, since neither peer keeps a listener open after the initial punch.
 type sessionDialer struct {
 	relayAddr    string
 	sessionID    string
@@ -27,18 +35,24 @@ type sessionDialer struct {
 
 // DialFunc is the function handed to conn.New.
 func (d *sessionDialer) DialFunc() (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), d.attemptBudget())
-	defer cancel()
-
 	d.mu.Lock()
 	established := d.established
 	d.mu.Unlock()
 
 	if established {
-		if c, err := d.dialDirect(ctx); err == nil {
+		// Best-effort direct reconnect on its own short budget; usually fails
+		// fast (connection refused) and we fall through to re-rendezvous.
+		dctx, dcancel := context.WithTimeout(context.Background(), directReconnectTimeout)
+		c, err := d.dialDirect(dctx)
+		dcancel()
+		if err == nil {
 			return c, nil
 		}
 	}
+
+	// Re-rendezvous gets its own full budget, independent of the direct attempt.
+	ctx, cancel := context.WithTimeout(context.Background(), d.attemptBudget())
+	defer cancel()
 	return d.rendezvous(ctx)
 }
 

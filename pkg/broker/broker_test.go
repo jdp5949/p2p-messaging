@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -324,25 +325,41 @@ func TestInboundReassembly(t *testing.T) {
 	}
 }
 
+// TestReconnectGivesUpAfterDelays drives a conn whose first dial succeeds but
+// every reconnect fails, then asserts handleReconnect exhausts the full delay
+// schedule (one Reconnect attempt per delay) and returns false.
 func TestReconnectGivesUpAfterDelays(t *testing.T) {
-	failCalled := make(chan struct{}, 1)
+	var calls int32
+	clientRaw, _ := net.Pipe()
+	c, err := conn.New(conn.Config{
+		DialFunc: func() (net.Conn, error) {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				return clientRaw, nil // initial dial succeeds
+			}
+			return nil, errors.New("dial down") // every reconnect fails
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
 	b := &Broker{
+		conn: c,
+		stop: make(chan struct{}),
 		cfg: Config{
-			ReconnectDelays:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
-			OnReconnectFailed: func() { failCalled <- struct{}{} },
+			ReconnectDelays: []time.Duration{
+				5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond,
+			},
 		},
 	}
-	ok := b.handleReconnect(b.cfg.ReconnectDelays)
-	if ok {
-		t.Fatal("handleReconnect returned true with nil conn")
+
+	if b.handleReconnect(b.cfg.ReconnectDelays) {
+		t.Fatal("handleReconnect should return false when every Reconnect errors")
 	}
-	if b.cfg.OnReconnectFailed != nil {
-		b.cfg.OnReconnectFailed()
-	}
-	select {
-	case <-failCalled:
-	case <-time.After(time.Second):
-		t.Fatal("OnReconnectFailed not invoked")
+	// 1 initial dial + 3 failed reconnect attempts (one per delay).
+	if got := atomic.LoadInt32(&calls); got != 4 {
+		t.Fatalf("DialFunc calls = %d, want 4 (1 initial + 3 reconnect)", got)
 	}
 }
 

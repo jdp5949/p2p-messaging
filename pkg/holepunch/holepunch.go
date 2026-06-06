@@ -18,7 +18,7 @@ const DefaultTimeout = 5 * time.Second
 
 // Info describes a peer's known endpoints as reported by/to the relay.
 type Info struct {
-	PublicAddr string   `json:"public_addr"`            // e.g. "203.0.113.5:54321"
+	PublicAddr string   `json:"public_addr"`           // e.g. "203.0.113.5:54321"
 	LocalAddrs []string `json:"local_addrs,omitempty"` // LAN addrs e.g. "192.168.1.10:9000"
 }
 

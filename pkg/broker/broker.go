@@ -325,6 +325,14 @@ func (b *Broker) readLoop() {
 
 			if isConnError(err) {
 				if !b.handleReconnect(reconnectDelays) {
+					// Distinguish a clean shutdown (Close closed b.stop) from
+					// a genuine reconnect-window exhaustion. Only the latter
+					// is a real peer drop.
+					select {
+					case <-b.stop:
+						return
+					default:
+					}
 					if b.cfg.OnReconnectFailed != nil {
 						b.cfg.OnReconnectFailed()
 					}
