@@ -88,45 +88,59 @@ go build -o relay  ./cmd/relay
 go build -o bench  ./cmd/bench
 ```
 
-### Run relay (public host)
+### Easiest: croc-style chat (`p2p`)
+
+Install:
 
 ```sh
-./relay --addr :9000
+go install github.com/jdp5949/p2p-messaging/cmd/p2p@latest
 ```
 
-### Run peers (plaintext)
+Sender:
 
 ```sh
-# Peer A (sender)
-./peer --relay relay.example.com:9000 --room myroom --send
-
-# Peer B (receiver)
-./peer --relay relay.example.com:9000 --room myroom --recv
+p2p send
+# Code is: 4-brave-tiger-comet
 ```
 
-### Run peers (E2E encrypted, first connect with PAKE)
+Receiver (on the other machine):
 
 ```sh
-# Peer B — listen, share one-time code "test-2026" out-of-band
-./peer --relay relay.example.com:9000 --room myroom --recv \
-  -id ~/.p2p/id_ed25519 -known ~/.p2p/known_peers -pake test-2026
-
-# Peer A — dial, uses same one-time code
-./peer --relay relay.example.com:9000 --room myroom --send \
-  -id ~/.p2p/id_ed25519 -known ~/.p2p/known_peers \
-  -peer-name bob -pake test-2026
+p2p 4-brave-tiger-comet
 ```
 
-After the first connect, both peers pin each other's Ed25519 public key in `known_peers`. Subsequent connections use the faster KK pattern (no PAKE needed).
+Both sides now have an encrypted (Noise/AES), NAT-punched chat. The first
+connect authenticates with the code phrase (PAKE) and pins each peer's Ed25519
+key; reconnects use the faster KK pattern. On a connection drop it retries
+(direct first, then relay) for 60 seconds before giving up.
 
-### Run peers with WAL persistence
+By default it uses the hosted relay at `129.153.24.33.nip.io:9009`. Override
+with `-relay host:port`.
+
+### Self-hosting the relay
 
 ```sh
-./peer --relay relay.example.com:9000 --room myroom --send \
-  -id ~/.p2p/id_ed25519 -wal /var/lib/p2p/send.wal
+go build -o relay ./cmd/relay
+./relay -addr :9009                                   # plaintext
+./relay -addr :9009 -tls \
+  -tls-cert fullchain.pem -tls-key privkey.pem        # TLS
 ```
 
-On restart, the peer replays unacked messages from the WAL before sending new ones.
+Point peers at it: `p2p -relay your.host:9009 send`.
+See [`deploy/`](deploy/) for a ready-made systemd unit.
+
+### Low-level: direct peer (no relay)
+
+The `peer` binary connects two hosts directly when you already know the address
+(LAN or a port-forwarded host):
+
+```sh
+./peer -listen :9000                 # receiver
+./peer -addr 192.168.1.50:9000       # sender
+```
+
+Add `-pake <code> -peer-name <name>` for first-connect encryption and
+`-wal /path/send.wal` for crash-recovery replay of unacked messages.
 
 ## Using the Library
 
