@@ -111,6 +111,36 @@ func TestPunchTimeout(t *testing.T) {
 	t.Logf("returned after %v with: %v", elapsed, err)
 }
 
+func TestFreePortAndDialReuse(t *testing.T) {
+	port, err := FreePort()
+	if err != nil {
+		t.Fatalf("FreePort: %v", err)
+	}
+	if port <= 0 {
+		t.Fatalf("FreePort returned %d", port)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := DialReuse(ctx, port, ln.Addr().String())
+	if err != nil {
+		t.Fatalf("DialReuse: %v", err)
+	}
+	defer conn.Close()
+
+	la := conn.LocalAddr().(*net.TCPAddr)
+	if la.Port != port {
+		t.Fatalf("local port = %d, want %d", la.Port, port)
+	}
+}
+
 // TestReusePort verifies that SO_REUSEPORT allows simultaneous listen and
 // dial on the same local port.
 func TestReusePort(t *testing.T) {

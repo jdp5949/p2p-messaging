@@ -18,7 +18,7 @@ const DefaultTimeout = 5 * time.Second
 
 // Info describes a peer's known endpoints as reported by/to the relay.
 type Info struct {
-	PublicAddr string   `json:"public_addr"`            // e.g. "203.0.113.5:54321"
+	PublicAddr string   `json:"public_addr"`           // e.g. "203.0.113.5:54321"
 	LocalAddrs []string `json:"local_addrs,omitempty"` // LAN addrs e.g. "192.168.1.10:9000"
 }
 
@@ -138,6 +138,25 @@ func AttemptPunch(remote Info, localPort int, timeout time.Duration) (net.Conn, 
 		return nil, firstErr
 	}
 	return nil, fmt.Errorf("holepunch: all %d attempts failed", total)
+}
+
+// DialReuse dials remoteAddr from localPort using SO_REUSEPORT so the same
+// NAT mapping can later be reused by AttemptPunch. Exported wrapper around
+// the internal reuse dialer.
+func DialReuse(ctx context.Context, localPort int, remoteAddr string) (net.Conn, error) {
+	return dialDirect(ctx, localPort, remoteAddr)
+}
+
+// FreePort returns an OS-assigned free TCP port. The port is released before
+// returning; callers must immediately rebind it with SO_REUSEPORT/REUSEADDR
+// (e.g. via DialReuse) to avoid a race.
+func FreePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
 // buildTargets returns the ordered list of addresses to dial.

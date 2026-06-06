@@ -14,6 +14,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"io"
@@ -51,13 +52,37 @@ var (
 	pending = make(map[string]*readyPeer)
 )
 
+// wrapTLS returns a TLS listener over base when cfg is non-nil, else base.
+func wrapTLS(base net.Listener, cfg *tls.Config) net.Listener {
+	if cfg == nil {
+		return base
+	}
+	return tls.NewListener(base, cfg)
+}
+
 func main() {
 	addr := flag.String("addr", ":9000", "listen address")
+	useTLS := flag.Bool("tls", false, "enable TLS on the listener")
+	certPath := flag.String("tls-cert", "", "path to TLS fullchain cert (PEM)")
+	keyPath := flag.String("tls-key", "", "path to TLS private key (PEM)")
 	flag.Parse()
 
-	ln, err := net.Listen("tcp", *addr)
+	base, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("[RELAY] listen error: %v", err)
+	}
+
+	var ln net.Listener = base
+	if *useTLS {
+		if *certPath == "" || *keyPath == "" {
+			log.Fatalf("[RELAY] -tls requires -tls-cert and -tls-key")
+		}
+		cert, err := tls.LoadX509KeyPair(*certPath, *keyPath)
+		if err != nil {
+			log.Fatalf("[RELAY] load cert: %v", err)
+		}
+		ln = wrapTLS(base, &tls.Config{Certificates: []tls.Certificate{cert}})
+		log.Printf("[RELAY] TLS enabled")
 	}
 	log.Printf("[RELAY] listening on %s", *addr)
 
