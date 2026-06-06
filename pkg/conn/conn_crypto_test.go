@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/crypto"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/crypto"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 // makeTestIdentity creates a temp-file-backed identity for tests.

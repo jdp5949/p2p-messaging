@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/holepunch"
+	"github.com/jdp5949/p2p-messaging/pkg/holepunch"
 )
 
 const (

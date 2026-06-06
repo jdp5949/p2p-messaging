@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaypatel/p2p-messaging/pkg/wal"
+	"github.com/jdp5949/p2p-messaging/pkg/wal"
 )
 
 func openTmp(t *testing.T, fsync bool) (*wal.WAL, string) {

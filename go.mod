@@ -1,4 +1,4 @@
-module github.com/jaypatel/p2p-messaging
+module github.com/jdp5949/p2p-messaging
 
 go 1.24
 

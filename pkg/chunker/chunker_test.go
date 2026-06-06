@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/compress"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/compress"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 func mustEncoder(t *testing.T) *compress.Encoder {

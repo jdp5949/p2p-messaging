@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/broker"
-	"github.com/jaypatel/p2p-messaging/pkg/conn"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/broker"
+	"github.com/jdp5949/p2p-messaging/pkg/conn"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 const twoMB = 2 * 1024 * 1024
