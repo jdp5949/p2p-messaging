@@ -2,8 +2,15 @@ package main
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -157,6 +164,67 @@ func TestRelayFallbackBridge(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestListenerTLSWrap(t *testing.T) {
+	certPEM, keyPEM := genSelfSigned(t)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+
+	ln := wrapTLS(base, &tls.Config{Certificates: []tls.Certificate{cert}})
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = c.RemoteAddr()
+		c.Write([]byte("hi\n"))
+		c.Close()
+	}()
+
+	client, err := tls.Dial("tcp", base.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer client.Close()
+	buf := make([]byte, 3)
+	if _, err := client.Read(buf); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(buf) != "hi\n" {
+		t.Fatalf("got %q", buf)
+	}
+}
+
+func genSelfSigned(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(crand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	b, _ := x509.MarshalECPrivateKey(key)
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: b})
+	return
 }
 
 // TestRelayPunchOKClosesRelay verifies that the relay closes its end when
