@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/crypto"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/crypto"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 const MaxPayloadSize = 16 * 1024 * 1024 // 16 MB

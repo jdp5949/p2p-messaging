@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/holepunch"
+	"github.com/jdp5949/p2p-messaging/pkg/holepunch"
 )
 
 // startTestRelay boots the relay on a random port and returns the address.

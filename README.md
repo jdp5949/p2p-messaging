@@ -4,6 +4,8 @@ Direct peer-to-peer messaging library in Go. No broker in the hot path. Like Sol
 
 Now with **E2E encryption** (Noise Protocol), **WAL persistence**, and **NAT hole-punch**.
 
+📖 **Docs & guide:** https://jdp5949.github.io/p2p-messaging/
+
 ## Architecture
 
 ```
@@ -67,9 +69,16 @@ curl -Lo relay https://github.com/jdp5949/p2p-messaging/releases/latest/download
 chmod +x peer relay
 ```
 
-### Build from source
+### Install with Go (one command)
 
 Requires Go 1.21+.
+
+```sh
+go install github.com/jdp5949/p2p-messaging/cmd/peer@latest
+go install github.com/jdp5949/p2p-messaging/cmd/relay@latest
+```
+
+### Build from source
 
 ```sh
 git clone https://github.com/jdp5949/p2p-messaging
@@ -131,8 +140,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jaypatel/p2p-messaging/pkg/broker"
-    "github.com/jaypatel/p2p-messaging/pkg/conn"
+    "github.com/jdp5949/p2p-messaging/pkg/broker"
+    "github.com/jdp5949/p2p-messaging/pkg/conn"
 )
 
 func main() {
@@ -174,10 +183,10 @@ import (
     "context"
     "log"
 
-    "github.com/jaypatel/p2p-messaging/pkg/broker"
-    "github.com/jaypatel/p2p-messaging/pkg/conn"
-    "github.com/jaypatel/p2p-messaging/pkg/crypto"
-    "github.com/jaypatel/p2p-messaging/pkg/wal"
+    "github.com/jdp5949/p2p-messaging/pkg/broker"
+    "github.com/jdp5949/p2p-messaging/pkg/conn"
+    "github.com/jdp5949/p2p-messaging/pkg/crypto"
+    "github.com/jdp5949/p2p-messaging/pkg/wal"
 )
 
 func main() {

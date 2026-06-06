@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/conn"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/conn"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 // benchBroker creates a broker backed by a loopback pipe with an auto-ACK server.

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
 
 func pipePair(t *testing.T) (*Conn, net.Conn) {

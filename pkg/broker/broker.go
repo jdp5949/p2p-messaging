@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jaypatel/p2p-messaging/pkg/chunker"
-	"github.com/jaypatel/p2p-messaging/pkg/compress"
-	"github.com/jaypatel/p2p-messaging/pkg/conn"
-	"github.com/jaypatel/p2p-messaging/pkg/protocol"
-	"github.com/jaypatel/p2p-messaging/pkg/wal"
+	"github.com/jdp5949/p2p-messaging/pkg/chunker"
+	"github.com/jdp5949/p2p-messaging/pkg/compress"
+	"github.com/jdp5949/p2p-messaging/pkg/conn"
+	"github.com/jdp5949/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/wal"
 )
 
 const (
