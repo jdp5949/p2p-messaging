@@ -1,0 +1,19 @@
+[Unit]
+Description=p2p-messaging relay (rendezvous + hole-punch, TLS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/home/ubuntu/p2p-relay/relay -addr :9009 -tls \
+  -tls-cert /etc/letsencrypt/live/129.153.24.33.nip.io/fullchain.pem \
+  -tls-key /etc/letsencrypt/live/129.153.24.33.nip.io/privkey.pem
+Restart=always
+RestartSec=3
+# Restart daily so renewed certs are picked up.
+RuntimeMaxSec=86400
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
