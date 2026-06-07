@@ -7,9 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
+
+func TestSendTimesOutWithoutAck(t *testing.T) {
+	old := ackTimeout
+	ackTimeout = 50 * time.Millisecond
+	defer func() { ackTimeout = old }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Receiver never sends DONE.
+	in := make(chan Msg) // never delivers
+	err := Send(func(protocol.ContentType, []byte) error { return nil }, in, []string{path}, nil)
+	if err == nil {
+		t.Fatal("expected timeout error when peer never acknowledges")
+	}
+}
 
 func TestSendSingleFileSequence(t *testing.T) {
 	dir := t.TempDir()
