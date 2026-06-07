@@ -24,7 +24,7 @@ import (
 )
 
 // defaultRelay is the hosted relay. Override with -relay.
-const defaultRelay = "p2pmsg.duckdns.org:9009"
+const defaultRelay = "relay.p2pmsg.duckdns.org:9009"
 
 func main() {
 	relayAddr := flag.String("relay", defaultRelay, "relay host:port")
