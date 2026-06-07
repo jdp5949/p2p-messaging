@@ -49,7 +49,10 @@ func mockRelay(t *testing.T) string {
 		if _, err := r.ReadString('\n'); err != nil { // PUNCH_OK / PUNCH_FAIL
 			return
 		}
-		io.Copy(c, r) // echo the data path back to the client
+		if _, err := io.WriteString(c, "BRIDGE\n"); err != nil { // relay decision
+			return
+		}
+		io.Copy(c, r) // echo the bridged data path back to the client
 	}()
 	return ln.Addr().String()
 }
