@@ -19,10 +19,21 @@ const streamReadBuf = 1 << 20 // 1 MB: max framed message the adapter reads
 // sessionStream adapts a *crypto.Session to transfer.Stream.
 type sessionStream struct{ s *crypto.Session }
 
-func (a *sessionStream) WriteMsg(p []byte) error { _, e := a.s.Write(p); return e }
+// streamIdleTimeout bounds a single read/write so a dead peer aborts the
+// transfer with an error instead of hanging forever.
+const streamIdleTimeout = 90 * time.Second
+
+func (a *sessionStream) WriteMsg(p []byte) error {
+	_ = a.s.SetWriteDeadline(time.Now().Add(streamIdleTimeout))
+	_, e := a.s.Write(p)
+	_ = a.s.SetWriteDeadline(time.Time{})
+	return e
+}
 func (a *sessionStream) ReadMsg() ([]byte, error) {
 	buf := make([]byte, streamReadBuf)
+	_ = a.s.SetReadDeadline(time.Now().Add(streamIdleTimeout))
 	n, e := a.s.Read(buf)
+	_ = a.s.SetReadDeadline(time.Time{})
 	if e != nil {
 		return nil, e
 	}

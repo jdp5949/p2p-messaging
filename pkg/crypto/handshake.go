@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/flynn/noise"
 )
@@ -196,6 +197,11 @@ func (s *Session) RemotePubKey() ed25519.PublicKey {
 func (s *Session) Close() error {
 	return s.conn.Close()
 }
+
+// SetReadDeadline / SetWriteDeadline pass through to the underlying conn so
+// callers can bound blocking reads/writes (e.g. abort a stalled transfer).
+func (s *Session) SetReadDeadline(t time.Time) error  { return s.conn.SetReadDeadline(t) }
+func (s *Session) SetWriteDeadline(t time.Time) error { return s.conn.SetWriteDeadline(t) }
 
 // writeFrame writes a length-prefixed frame (4-byte big-endian length + data).
 func writeFrame(w io.Writer, data []byte) error {

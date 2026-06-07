@@ -175,12 +175,14 @@ func ReceiveParallel(streams []Stream, destDir string, overwrite OverwriteFn, pr
 	var mu sync.Mutex // guards WriteAt (os.File.WriteAt is safe concurrently on most platforms, but lock to be safe)
 	for i := 0; i < m; i++ {
 		go func(i int) {
-			eosSeen := false
 			for {
 				mb, e := streams[i].ReadMsg()
 				if e != nil {
 					errc <- e
 					return
+				}
+				if len(mb) == 0 {
+					continue
 				}
 				switch mb[0] {
 				case tagData:
@@ -200,7 +202,6 @@ func ReceiveParallel(streams []Stream, destDir string, overwrite OverwriteFn, pr
 						progress(atomic.AddInt64(&written, int64(len(data))), hdr.Size)
 					}
 				case tagEOS:
-					eosSeen = true
 					if i != 0 {
 						errc <- nil
 						return
@@ -216,7 +217,6 @@ func ReceiveParallel(streams []Stream, destDir string, overwrite OverwriteFn, pr
 					errc <- nil
 					return
 				}
-				_ = eosSeen
 			}
 		}(i)
 	}
