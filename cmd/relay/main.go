@@ -213,18 +213,26 @@ func coordinate(first, second *readyPeer, sessionID string) {
 	r1 := <-ch
 	r2 := <-ch
 
-	if r1.ok || r2.ok {
-		log.Printf("[RELAY] session=%s punch succeeded, closing relay", sessionID)
+	// Clear the read deadlines set during result collection.
+	a.SetDeadline(time.Time{}) //nolint:errcheck
+	b.SetDeadline(time.Time{}) //nolint:errcheck
+
+	// Unanimous decision: DIRECT only when BOTH peers validated their direct
+	// link. Otherwise BRIDGE — guaranteeing both peers use the same, working
+	// transport (no asymmetric half-open direct conn).
+	if r1.ok && r2.ok {
+		log.Printf("[RELAY] session=%s punch validated both sides, going DIRECT", sessionID)
+		a.Write([]byte("DIRECT\n")) //nolint:errcheck
+		b.Write([]byte("DIRECT\n")) //nolint:errcheck
 		a.Close()
 		b.Close()
 		return
 	}
 
-	log.Printf("[RELAY] session=%s punch failed, starting bridge", sessionID)
-	// Reset deadlines before bridging.
-	a.SetDeadline(time.Time{}) //nolint:errcheck
-	b.SetDeadline(time.Time{}) //nolint:errcheck
-	// Pass bufio readers so any buffered bytes after PUNCH_FAIL flow through bridge.
+	log.Printf("[RELAY] session=%s punch not validated, BRIDGE", sessionID)
+	a.Write([]byte("BRIDGE\n")) //nolint:errcheck
+	b.Write([]byte("BRIDGE\n")) //nolint:errcheck
+	// Pass bufio readers so any buffered bytes flow through the bridge.
 	bridge2(a, b, first.reader, bReader, sessionID)
 }
 

@@ -136,6 +136,14 @@ func TestRelayFallbackBridge(t *testing.T) {
 	fmt.Fprintf(connA, "PUNCH_FAIL\n")
 	fmt.Fprintf(connB, "PUNCH_FAIL\n")
 
+	// Relay decides BRIDGE and announces it to both before bridging.
+	if got := readLine(t, connA, rA); got != "BRIDGE" {
+		t.Fatalf("A decision = %q, want BRIDGE", got)
+	}
+	if got := readLine(t, connB, rB); got != "BRIDGE" {
+		t.Fatalf("B decision = %q, want BRIDGE", got)
+	}
+
 	// Now the relay bridge should be active — send data A→B and B→A.
 	msg := "hello-via-relay\n"
 	done := make(chan error, 2)
@@ -227,9 +235,9 @@ func genSelfSigned(t *testing.T) (certPEM, keyPEM []byte) {
 	return
 }
 
-// TestRelayPunchOKClosesRelay verifies that the relay closes its end when
-// a peer sends PUNCH_OK.
-func TestRelayPunchOKClosesRelay(t *testing.T) {
+// TestRelayDirectWhenBothValidate verifies that when BOTH peers report
+// PUNCH_OK the relay announces DIRECT and then closes its end.
+func TestRelayDirectWhenBothValidate(t *testing.T) {
 	relayAddr := startTestRelay(t)
 	sessionID := "test-session-punchok"
 
@@ -246,11 +254,48 @@ func TestRelayPunchOKClosesRelay(t *testing.T) {
 	fmt.Fprintf(connA, "PUNCH_OK\n")
 	fmt.Fprintf(connB, "PUNCH_OK\n")
 
-	// After PUNCH_OK the relay should close both connections.
+	// Both validated → relay says DIRECT, then closes.
+	if got := readLine(t, connA, rA); got != "DIRECT" {
+		t.Fatalf("A decision = %q, want DIRECT", got)
+	}
+	if got := readLine(t, connB, rB); got != "DIRECT" {
+		t.Fatalf("B decision = %q, want DIRECT", got)
+	}
 	connA.SetReadDeadline(time.Now().Add(3 * time.Second)) //nolint:errcheck
-	buf := make([]byte, 4)
-	_, err := connA.Read(buf)
-	if err == nil {
-		t.Error("expected relay to close connA after PUNCH_OK")
+	if _, err := rA.ReadString('\n'); err == nil {
+		t.Error("expected relay to close connA after DIRECT")
+	}
+}
+
+// TestRelayBridgeWhenOneFails verifies that if only ONE peer validates, the
+// relay still bridges (no asymmetric direct).
+func TestRelayBridgeWhenOneFails(t *testing.T) {
+	relayAddr := startTestRelay(t)
+	sessionID := "test-session-onefail"
+
+	connA, rA := connectPeer(t, relayAddr, sessionID, nil)
+	defer connA.Close()
+	connB, rB := connectPeer(t, relayAddr, sessionID, nil)
+	defer connB.Close()
+
+	readLine(t, connA, rA)
+	readLine(t, connB, rB)
+	readLine(t, connA, rA)
+	readLine(t, connB, rB)
+
+	// A validated, B did not → must bridge.
+	fmt.Fprintf(connA, "PUNCH_OK\n")
+	fmt.Fprintf(connB, "PUNCH_FAIL\n")
+
+	if got := readLine(t, connA, rA); got != "BRIDGE" {
+		t.Fatalf("A decision = %q, want BRIDGE", got)
+	}
+	if got := readLine(t, connB, rB); got != "BRIDGE" {
+		t.Fatalf("B decision = %q, want BRIDGE", got)
+	}
+	// Bridge works.
+	fmt.Fprintf(connA, "x\n")
+	if got := readLine(t, connB, rB); got != "x" {
+		t.Fatalf("bridge B got %q want x", got)
 	}
 }
