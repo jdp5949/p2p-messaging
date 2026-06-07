@@ -33,6 +33,7 @@ func main() {
 	knownPath := flag.String("known", "~/.p2p/known_peers", "known_peers path")
 	noCrypto := flag.Bool("no-crypto", false, "disable Noise encryption (dev only)")
 	debug := flag.Bool("debug", false, "verbose metrics (latency, connect time, path)")
+	streams := flag.Int("streams", 4, "parallel connections for file transfer (1 = single stream)")
 	flag.Parse()
 
 	args := flag.Args()
@@ -66,10 +67,13 @@ func main() {
 	sessionID := codephrase.SessionID(code)
 
 	var hsCfg *crypto.HandshakeConfig
+	var id *crypto.Identity
+	var kp *crypto.KnownPeers
 	if !*noCrypto {
-		id, err := crypto.LoadOrGenerateIdentity(*idPath)
+		var err error
+		id, err = crypto.LoadOrGenerateIdentity(*idPath)
 		fatalOn(err, "identity")
-		kp, err := crypto.LoadKnownPeers(*knownPath)
+		kp, err = crypto.LoadKnownPeers(*knownPath)
 		fatalOn(err, "known_peers")
 		hsCfg = &crypto.HandshakeConfig{
 			Identity:   id,
@@ -153,7 +157,40 @@ func main() {
 		return e
 	}
 
-	// Mode A: sending file(s)/dir(s) — we never read stdin as a sender.
+	// Stream config for parallel file transfer (requires crypto).
+	scfg := streamConfig{
+		relayAddr: *relayAddr, useTLS: !*noTLS, code: code,
+		id: id, known: kp, initiator: initiator,
+	}
+	if scfg.useTLS {
+		host, _, _ := net.SplitHostPort(*relayAddr)
+		scfg.tlsConfig = &tls.Config{ServerName: host}
+	}
+	parallelOK := !*noCrypto && *streams > 1
+
+	// Mode A0: parallel file send — trigger the receiver over the control
+	// session, then push the file across N data streams.
+	if len(sendPaths) > 0 && parallelOK {
+		inTransfer.Store(true) // silence broker reconnect notices during teardown
+		_ = sendMsg(protocol.ContentJSON, []byte(`{"t":"parallel"}`))
+		ps, serr := openStreams(scfg, *streams)
+		fatalOn(serr, "open streams")
+		if *debug {
+			fmt.Fprintf(os.Stderr, "negotiated %d stream(s)\n", len(ps))
+		}
+		fmt.Fprintf(os.Stderr, "Sending %d item(s) over %d stream(s)…\n", len(sendPaths), len(ps))
+		st, e := transfer.SendParallel(ps, sendPaths, progressBar)
+		for _, s := range ps {
+			s.Close()
+		}
+		fmt.Fprintln(os.Stderr)
+		_ = b.Close()
+		fatalOn(e, "send")
+		fmt.Fprintf(os.Stderr, "✓ sent %s in %s (%s)\n", humanize.Bytes(st.Bytes), humanize.Dur(st.Duration), humanize.Rate(st.Bytes, st.Duration))
+		return
+	}
+
+	// Mode A: single-stream file send — we never read stdin as a sender.
 	if len(sendPaths) > 0 {
 		inTransfer.Store(true)
 		fmt.Fprintf(os.Stderr, "Sending %d item(s) (%s)…\n", len(sendPaths), connMode(dialer))
@@ -203,6 +240,34 @@ func main() {
 			select {
 			case first = <-inbound:
 			case <-quit:
+				return
+			}
+			if transfer.Kind(first) == "parallel" {
+				// Peer is sending a file over multiple streams; open the data
+				// streams (count negotiated on the control stream) and receive.
+				inTransfer.Store(true) // silence broker reconnect notices
+				ps, serr := openStreams(scfg, *streams)
+				if serr != nil {
+					fmt.Fprintf(os.Stderr, "open streams: %v\n", serr)
+					close(quit)
+					return
+				}
+				if *debug {
+					fmt.Fprintf(os.Stderr, "negotiated %d stream(s)\n", len(ps))
+				}
+				dest, _ := os.Getwd()
+				saved, st, rerr := transfer.ReceiveParallel(ps, dest, promptOverwrite, progressBar)
+				for _, s := range ps {
+					s.Close()
+				}
+				fmt.Fprintln(os.Stderr)
+				if rerr != nil {
+					fmt.Fprintf(os.Stderr, "receive failed: %v\n", rerr)
+				} else {
+					fmt.Fprintf(os.Stderr, "✓ saved %s — %s in %s (%s), sha256 ok\n", saved,
+						humanize.Bytes(st.Bytes), humanize.Dur(st.Duration), humanize.Rate(st.Bytes, st.Duration))
+				}
+				close(quit)
 				return
 			}
 			if transfer.Kind(first) == "header" {

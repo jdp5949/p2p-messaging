@@ -96,11 +96,15 @@ func runBench(relayAddr string, useTLS bool, idPath, knownPath string, args []st
 		fmt.Printf("On the other computer run:\n\n    p2p bench %s\n\n", code)
 	}
 
-	// Initiator size matrix: scan args for `-sizes <csv>`.
+	// Scan args for `-sizes <csv>` and `-streams <n>`.
 	sizesCSV := defaultBenchSizes
+	streamsN := 4
 	for i := 0; i < len(args); i++ {
 		if args[i] == "-sizes" && i+1 < len(args) {
 			sizesCSV = args[i+1]
+		}
+		if args[i] == "-streams" && i+1 < len(args) {
+			fmt.Sscanf(args[i+1], "%d", &streamsN)
 		}
 	}
 
@@ -110,6 +114,18 @@ func runBench(relayAddr string, useTLS bool, idPath, knownPath string, args []st
 	fatalOn(err, "identity")
 	kp, err := crypto.LoadKnownPeers(knownPath)
 	fatalOn(err, "known_peers")
+
+	// Multi-stream bench path (default): measure throughput over N parallel
+	// data sessions, exactly like `p2p send -streams N`.
+	if streamsN > 1 {
+		scfg := streamConfig{relayAddr: relayAddr, useTLS: useTLS, code: code, id: id, known: kp, initiator: initiator}
+		if useTLS {
+			host, _, _ := net.SplitHostPort(relayAddr)
+			scfg.tlsConfig = &tls.Config{ServerName: host}
+		}
+		runBenchParallel(scfg, streamsN, sizesCSV, initiator)
+		return
+	}
 	hsCfg := &crypto.HandshakeConfig{
 		Identity:   id,
 		KnownPeers: kp,
@@ -255,6 +271,75 @@ func runBenchResponder(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg) {
 	for i := range plan.Sizes {
 		if _, _, e := transfer.Receive(sendMsg, inbound, tmp, func(string) bool { return true }, nil); e != nil {
 			fmt.Fprintf(os.Stderr, "bench: transfer %d failed: %v\n", i+1, e)
+			return
+		}
+	}
+	fmt.Fprintln(os.Stderr, "bench complete")
+}
+
+// runBenchParallel measures throughput over n parallel data streams (the same
+// path as `p2p send -streams n`).
+func runBenchParallel(scfg streamConfig, n int, sizesCSV string, initiator bool) {
+	fmt.Fprintln(os.Stderr, "Connecting…")
+	t0 := time.Now()
+	ps, err := openStreams(scfg, n)
+	fatalOn(err, "open streams")
+	connectTime := time.Since(t0)
+	defer func() {
+		for _, s := range ps {
+			s.Close()
+		}
+	}()
+
+	if initiator {
+		sizes, e := parseSizes(sizesCSV)
+		fatalOn(e, "sizes")
+		// Latency: round-trip a 1-byte ping on the control stream.
+		var latency time.Duration
+		lt := time.Now()
+		if ps[0].WriteMsg([]byte{'P'}) == nil {
+			if _, re := ps[0].ReadMsg(); re == nil {
+				latency = time.Since(lt)
+			}
+		}
+		pj, _ := json.Marshal(benchPlan{T: "bench", Sizes: sizes})
+		fatalOn(ps[0].WriteMsg(pj), "plan")
+		fmt.Printf("Connected : %s (%d streams)\n", humanize.Dur(connectTime), len(ps))
+		fmt.Printf("Latency   : %s (round-trip)\n", humanize.Dur(latency))
+		fmt.Println("  SIZE  TIME  THROUGHPUT")
+		tmp, _ := os.MkdirTemp("", "p2pbench")
+		defer os.RemoveAll(tmp)
+		for _, sz := range sizes {
+			path := filepath.Join(tmp, "blob")
+			if e := writeRandomFile(path, sz); e != nil {
+				fmt.Printf("  %s  FAILED (%v)\n", humanize.Bytes(sz), e)
+				break
+			}
+			st, e := transfer.SendParallel(ps, []string{path}, nil)
+			if e != nil {
+				fmt.Printf("  %s  FAILED (%v)\n", humanize.Bytes(sz), e)
+				break
+			}
+			fmt.Printf("  %s  %s  %s\n", humanize.Bytes(sz), humanize.Dur(st.Duration), humanize.Rate(st.Bytes, st.Duration))
+		}
+		fmt.Fprintln(os.Stderr, "bench complete")
+		return
+	}
+
+	// Responder.
+	if mb, e := ps[0].ReadMsg(); e == nil && len(mb) > 0 && mb[0] == 'P' {
+		_ = ps[0].WriteMsg([]byte{'P'})
+	}
+	pb, e := ps[0].ReadMsg()
+	fatalOn(e, "plan")
+	var plan benchPlan
+	_ = json.Unmarshal(pb, &plan)
+	fmt.Fprintf(os.Stderr, "Receiving %d benchmark transfer(s) over %d stream(s)…\n", len(plan.Sizes), len(ps))
+	tmp, _ := os.MkdirTemp("", "p2pbenchrecv")
+	defer os.RemoveAll(tmp)
+	for i := range plan.Sizes {
+		if _, _, e := transfer.ReceiveParallel(ps, tmp, func(string) bool { return true }, nil); e != nil {
+			fmt.Fprintf(os.Stderr, "transfer %d failed: %v\n", i+1, e)
 			return
 		}
 	}
