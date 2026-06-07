@@ -49,6 +49,7 @@ func Dur(d time.Duration) string {
 
 // ParseSize parses "512", "10MB", "1.5GB" (case-insensitive) into bytes.
 func ParseSize(s string) (int64, error) {
+	orig := s
 	s = strings.TrimSpace(strings.ToUpper(s))
 	mult := int64(1)
 	switch {
@@ -64,7 +65,7 @@ func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0, fmt.Errorf("humanize: bad size %q: %w", s, err)
+		return 0, fmt.Errorf("humanize: bad size %q: %w", orig, err)
 	}
 	return int64(f * float64(mult)), nil
 }

@@ -9,7 +9,7 @@ func TestBytes(t *testing.T) {
 	cases := map[int64]string{
 		0: "0 B", 512: "512 B", 1023: "1023 B",
 		1024: "1.0 KB", 1536: "1.5 KB",
-		5 * 1024 * 1024: "5.0 MB",
+		5 * 1024 * 1024:        "5.0 MB",
 		3 * 1024 * 1024 * 1024: "3.0 GB",
 	}
 	for n, want := range cases {
