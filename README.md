@@ -53,29 +53,39 @@ Now with **E2E encryption** (Noise Protocol), **WAL persistence**, and **NAT hol
 
 ## Quick Start
 
-### Install binary (pre-built)
+### Install binary (pre-built, no Go needed)
 
-Download the latest release from [GitHub Releases](https://github.com/jdp5949/p2p-messaging/releases):
+Download the `p2p` CLI from [GitHub Releases](https://github.com/jdp5949/p2p-messaging/releases/latest):
 
 ```sh
-# Linux (amd64)
-curl -Lo peer https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-linux-amd64
-curl -Lo relay https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-linux-amd64
-chmod +x peer relay
+# macOS (Apple Silicon)
+curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-arm64
+chmod +x p2p && ./p2p send
 
-# macOS (arm64)
-curl -Lo peer https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-darwin-arm64
-curl -Lo relay https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-darwin-arm64
-chmod +x peer relay
+# macOS (Intel)
+curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-amd64
+chmod +x p2p && ./p2p send
+
+# Linux (amd64)
+curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-amd64
+chmod +x p2p && ./p2p send
+
+# Linux (arm64)
+curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-arm64
+chmod +x p2p && ./p2p send
 ```
+
+Windows: download `p2p-windows-amd64.exe` from the releases page.
+
+Each release also ships the lower-level `peer`, `relay`, and `bench` binaries
+for the same platforms.
 
 ### Install with Go (one command)
 
 Requires Go 1.21+.
 
 ```sh
-go install github.com/jdp5949/p2p-messaging/cmd/peer@latest
-go install github.com/jdp5949/p2p-messaging/cmd/relay@latest
+go install github.com/jdp5949/p2p-messaging/cmd/p2p@latest
 ```
 
 ### Build from source

@@ -65,6 +65,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
+          go build -o dist/p2p-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/p2p
           go build -o dist/peer-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/peer
           go build -o dist/relay-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/relay
           go build -o dist/bench-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/bench
