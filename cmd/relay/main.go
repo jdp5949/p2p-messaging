@@ -53,6 +53,15 @@ var (
 	pending = make(map[string]*readyPeer)
 )
 
+// multiFlag collects a repeatable string flag.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
+
 // wrapTLS returns a TLS listener over base when cfg is non-nil, else base.
 func wrapTLS(base net.Listener, cfg *tls.Config) net.Listener {
 	if cfg == nil {
@@ -64,8 +73,11 @@ func wrapTLS(base net.Listener, cfg *tls.Config) net.Listener {
 func main() {
 	addr := flag.String("addr", ":9000", "listen address")
 	useTLS := flag.Bool("tls", false, "enable TLS on the listener")
-	certPath := flag.String("tls-cert", "", "path to TLS fullchain cert (PEM)")
-	keyPath := flag.String("tls-key", "", "path to TLS private key (PEM)")
+	// -tls-cert / -tls-key may be repeated (paired by order) to serve multiple
+	// hostnames; TLS picks the matching cert per connection via SNI.
+	var certPaths, keyPaths multiFlag
+	flag.Var(&certPaths, "tls-cert", "path to TLS fullchain cert (PEM); repeatable")
+	flag.Var(&keyPaths, "tls-key", "path to TLS private key (PEM); repeatable")
 	flag.Parse()
 
 	base, err := net.Listen("tcp", *addr)
@@ -75,15 +87,19 @@ func main() {
 
 	var ln net.Listener = base
 	if *useTLS {
-		if *certPath == "" || *keyPath == "" {
-			log.Fatalf("[RELAY] -tls requires -tls-cert and -tls-key")
+		if len(certPaths) == 0 || len(certPaths) != len(keyPaths) {
+			log.Fatalf("[RELAY] -tls requires matching -tls-cert and -tls-key (repeatable)")
 		}
-		cert, err := tls.LoadX509KeyPair(*certPath, *keyPath)
-		if err != nil {
-			log.Fatalf("[RELAY] load cert: %v", err)
+		var certs []tls.Certificate
+		for i := range certPaths {
+			cert, err := tls.LoadX509KeyPair(certPaths[i], keyPaths[i])
+			if err != nil {
+				log.Fatalf("[RELAY] load cert %s: %v", certPaths[i], err)
+			}
+			certs = append(certs, cert)
 		}
-		ln = wrapTLS(base, &tls.Config{Certificates: []tls.Certificate{cert}})
-		log.Printf("[RELAY] TLS enabled")
+		ln = wrapTLS(base, &tls.Config{Certificates: certs})
+		log.Printf("[RELAY] TLS enabled (%d cert(s), SNI-selected)", len(certs))
 	}
 	log.Printf("[RELAY] listening on %s", *addr)
 

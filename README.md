@@ -126,7 +126,7 @@ key; reconnects use the faster KK pattern. On a connection drop it retries
 
 You can also send files and folders: `p2p send <path>`.
 
-By default it uses the hosted relay at `129.153.24.33.nip.io:9009`. Override
+By default it uses the hosted relay at `relay.p2pmsg.duckdns.org:9009`. Override
 with `-relay host:port`.
 
 ### Self-hosting the relay
