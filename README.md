@@ -53,32 +53,32 @@ Now with **E2E encryption** (Noise Protocol), **WAL persistence**, and **NAT hol
 
 ## Quick Start
 
-### Install binary (pre-built, no Go needed)
+### Install (one line, no Go needed)
 
-Download the `p2p` CLI from [GitHub Releases](https://github.com/jdp5949/p2p-messaging/releases/latest):
+macOS / Linux:
 
 ```sh
-# macOS (Apple Silicon)
-curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-arm64
-chmod +x p2p && ./p2p send
-
-# macOS (Intel)
-curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-amd64
-chmod +x p2p && ./p2p send
-
-# Linux (amd64)
-curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-amd64
-chmod +x p2p && ./p2p send
-
-# Linux (arm64)
-curl -Lo p2p https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-arm64
-chmod +x p2p && ./p2p send
+curl -fsSL https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.sh | sh
 ```
 
-Windows: download `p2p-windows-amd64.exe` from the releases page.
+Windows (PowerShell):
 
-Each release also ships the lower-level `peer`, `relay`, and `bench` binaries
-for the same platforms.
+```powershell
+irm https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.ps1 | iex
+```
+
+Then just:
+
+```sh
+p2p send                 # start a chat
+p2p send movie.mp4       # send a file
+p2p send ./myfolder      # send a directory
+p2p <code>               # other machine: receive / join
+```
+
+Prefer a specific binary? See the
+[releases page](https://github.com/jdp5949/p2p-messaging/releases/latest)
+(`p2p-darwin-arm64`, `p2p-linux-amd64`, `p2p-windows-amd64.exe`, …).
 
 ### Install with Go (one command)
 
@@ -123,6 +123,8 @@ Both sides now have an encrypted (Noise/AES), NAT-punched chat. The first
 connect authenticates with the code phrase (PAKE) and pins each peer's Ed25519
 key; reconnects use the faster KK pattern. On a connection drop it retries
 (direct first, then relay) for 60 seconds before giving up.
+
+You can also send files and folders: `p2p send <path>`.
 
 By default it uses the hosted relay at `129.153.24.33.nip.io:9009`. Override
 with `-relay host:port`.
