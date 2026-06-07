@@ -5,11 +5,13 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/jdp5949/p2p-messaging/pkg/conn"
 	"github.com/jdp5949/p2p-messaging/pkg/crypto"
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
+	"github.com/jdp5949/p2p-messaging/pkg/transfer"
 )
 
 // defaultRelay is the hosted relay. Override with -relay.
@@ -38,10 +41,14 @@ func main() {
 
 	var code string
 	var initiator bool
+	var sendPaths []string
 	switch args[0] {
 	case "send":
 		code = codephrase.Generate()
 		initiator = true
+		if len(args) > 1 {
+			sendPaths = args[1:]
+		}
 		fmt.Printf("Code is: %s\n", code)
 		fmt.Printf("On the other computer run:\n\n    p2p %s\n\n", code)
 	case "relay":
@@ -95,31 +102,115 @@ func main() {
 		hsCfg.PAKECode = ""
 	}
 
-	fmt.Printf("\r✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
-
+	inbound := make(chan transfer.Msg, 128)
 	dropped := make(chan struct{})
 	quit := make(chan struct{})
+	// inTransfer silences the chat-oriented reconnect notices during a file
+	// transfer (its teardown/drops are reported by the transfer layer instead).
+	var inTransfer atomic.Bool
 	b, err := broker.New(broker.Config{
 		Conn:       c,
 		ACKTimeout: 30 * time.Second,
 		OnInbound: func(m broker.InboundMsg) {
-			fmt.Printf("peer> %s\n", m.Payload)
+			inbound <- transfer.Msg{ContentType: m.ContentType, Payload: m.Payload}
 		},
 		OnDisconnected: func() {
-			fmt.Fprintln(os.Stderr, "⚠ peer offline — reconnecting (up to 60s)…")
+			if !inTransfer.Load() {
+				fmt.Fprintln(os.Stderr, "⚠ peer offline — reconnecting (up to 60s)…")
+			}
 		},
 		OnReconnected: func() {
-			fmt.Fprintf(os.Stderr, "✓ peer back online (%s)\n", connMode(dialer))
+			if !inTransfer.Load() {
+				fmt.Fprintf(os.Stderr, "✓ peer back online (%s)\n", connMode(dialer))
+			}
 		},
 		OnReconnectFailed: func() {
-			fmt.Fprintln(os.Stderr, "✗ peer lost — gave up after 60s. Exiting.")
+			fmt.Fprintln(os.Stderr, "✗ peer lost — gave up after 60s.")
 			close(dropped)
 		},
 		PingInterval: 10 * time.Second,
 	})
 	fatalOn(err, "broker")
 
-	go chatLoop(b, quit)
+	sendMsg := func(ct protocol.ContentType, p []byte) error {
+		_, e := b.Send(ct, protocol.PriorityNormal, p)
+		return e
+	}
+
+	// Mode A: sending file(s)/dir(s) — we never read stdin as a sender.
+	if len(sendPaths) > 0 {
+		inTransfer.Store(true)
+		fmt.Fprintf(os.Stderr, "Sending %d item(s) (%s)…\n", len(sendPaths), connMode(dialer))
+		errc := make(chan error, 1)
+		go func() { errc <- transfer.Send(sendMsg, inbound, sendPaths, progressBar) }()
+		var serr error
+		select {
+		case serr = <-errc:
+		case <-dropped:
+			serr = fmt.Errorf("peer lost during transfer")
+		}
+		fmt.Fprintln(os.Stderr)
+		_ = b.Close()
+		fatalOn(serr, "send")
+		fmt.Fprintln(os.Stderr, "✓ sent and verified by peer")
+		return
+	}
+
+	if initiator {
+		// Mode B: chat initiator (`p2p send` with no path). As the initiator we
+		// never receive a file, so reading stdin immediately is safe.
+		fmt.Printf("✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
+		go chatLoop(b, quit)
+		go func() {
+			for m := range inbound {
+				fmt.Printf("peer> %s\n", m.Payload)
+			}
+		}()
+	} else {
+		// Mode C: receiver. Peek the first inbound message to decide file-receive
+		// vs chat. Do NOT touch stdin until we know it is chat — otherwise the
+		// overwrite prompt and chat input would both read stdin.
+		go func() {
+			var first transfer.Msg
+			select {
+			case first = <-inbound:
+			case <-quit:
+				return
+			}
+			if transferIsHeader(first) {
+				inTransfer.Store(true)
+				merged := make(chan transfer.Msg, 128)
+				merged <- first
+				go func() {
+					for m := range inbound {
+						merged <- m
+					}
+				}()
+				dest, derr := os.Getwd()
+				if derr != nil {
+					fmt.Fprintf(os.Stderr, "receive failed: %v\n", derr)
+					close(quit)
+					return
+				}
+				saved, rerr := transfer.Receive(sendMsg, merged, dest, promptOverwrite, progressBar)
+				fmt.Fprintln(os.Stderr)
+				if rerr != nil {
+					fmt.Fprintf(os.Stderr, "receive failed: %v\n", rerr)
+				} else {
+					fmt.Fprintf(os.Stderr, "✓ saved %s (sha256 verified)\n", saved)
+				}
+				close(quit)
+				return
+			}
+			// Chat: first message was text.
+			fmt.Printf("✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
+			fmt.Printf("peer> %s\n", first.Payload)
+			go chatLoop(b, quit)
+			for m := range inbound {
+				fmt.Printf("peer> %s\n", m.Payload)
+			}
+		}()
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -152,6 +243,17 @@ func chatLoop(b *broker.Broker, quit chan struct{}) {
 			fmt.Fprintln(os.Stderr, "⚠ not delivered (peer offline?)")
 		}
 	}
+}
+
+// transferIsHeader reports whether m is a transfer HEADER message.
+func transferIsHeader(m transfer.Msg) bool {
+	if m.ContentType != protocol.ContentJSON {
+		return false
+	}
+	var probe struct {
+		T string `json:"t"`
+	}
+	return json.Unmarshal(m.Payload, &probe) == nil && probe.T == "header"
 }
 
 func usage() {
