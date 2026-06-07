@@ -48,13 +48,12 @@ type streamConfig struct {
 	initiator bool
 }
 
-// openSession opens one stream i: rendezvous + Noise handshake.
+// openSession opens one stream i: rendezvous + Noise handshake. Every parallel
+// data stream uses its own session id "<code>#<i>" — distinct from the plain
+// SessionID(code) the chat/single-stream broker path uses, so the two never
+// collide on the relay.
 func openSession(cfg streamConfig, i int) (*crypto.Session, error) {
-	id := cfg.code
-	sid := codephrase.SessionID(id)
-	if i > 0 {
-		sid = codephrase.SessionID(fmt.Sprintf("%s#%d", cfg.code, i))
-	}
+	sid := codephrase.SessionID(fmt.Sprintf("%s#%d", cfg.code, i))
 	ctx, cancel := contextWithTimeout(15 * time.Second)
 	defer cancel()
 	res, err := rendezvous.Dial(ctx, rendezvous.Options{

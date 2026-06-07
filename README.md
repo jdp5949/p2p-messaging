@@ -76,6 +76,10 @@ p2p send ./myfolder      # send a directory
 p2p <code>               # other machine: receive / join
 ```
 
+Large files transfer over **4 parallel streams by default** (faster on real
+internet paths); tune with `-streams N` (`-streams 1` = single stream). It
+auto-falls-back to fewer streams if the network can't open them all.
+
 Prefer a specific binary? See the
 [releases page](https://github.com/jdp5949/p2p-messaging/releases/latest)
 (`p2p-darwin-arm64`, `p2p-linux-amd64`, `p2p-windows-amd64.exe`, …).
