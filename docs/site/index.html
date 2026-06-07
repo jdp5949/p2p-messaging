@@ -397,57 +397,163 @@
     <h2>Getting Started</h2>
 
     <div class="gs-step">
-      <h3>Option A: Install pre-built binary</h3>
-      <pre><code><span class="cm"># Linux amd64</span>
-curl -sL https://github.com/jdp5949/p2p-messaging/releases/download/v0.1.0/peer-linux-amd64 -o peer
-chmod +x peer
+      <h3>Install in one line (no Go needed)</h3>
+      <pre><code><span class="cm"># macOS / Linux</span>
+curl -fsSL https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.sh | sh
 
-<span class="cm"># macOS arm64 (M-series)</span>
-curl -sL https://github.com/jdp5949/p2p-messaging/releases/download/v0.1.0/peer-darwin-arm64 -o peer
-chmod +x peer</code></pre>
+<span class="cm"># Windows (PowerShell)</span>
+irm https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.ps1 | iex</code></pre>
+      <p class="caption">Auto-detects OS/arch, installs the <code>p2p</code> binary on your PATH. Prefer Go? <code>go install github.com/jdp5949/p2p-messaging/cmd/p2p@latest</code></p>
     </div>
 
     <div class="gs-step">
-      <h3>Option B: Build from source</h3>
-      <pre><code>git clone https://github.com/jdp5949/p2p-messaging
-cd p2p-messaging
-go build ./cmd/peer ./cmd/relay ./cmd/bench</code></pre>
+      <h3>Use it — that's the whole setup</h3>
+      <pre><code><span class="cm"># Machine A — start a chat, or send a file / folder</span>
+p2p send
+p2p send movie.mp4
+p2p send ./my-folder
+<span class="cm"># → prints a code like:  4-brave-tiger-comet</span>
+
+<span class="cm"># Machine B — join with the code</span>
+p2p 4-brave-tiger-comet</code></pre>
+      <p class="caption">Encrypted (Noise + AES-256-GCM) end-to-end, NAT hole-punched, with a relay fallback. Files are SHA-256 verified.</p>
     </div>
   </section>
 
-  <!-- 4. Running Two Peers -->
+  <!-- 4. Two nodes, different networks -->
   <section>
-    <h2>Running Two Peers</h2>
+    <h2>Two Nodes, Different Networks — One Config</h2>
+    <p style="color:var(--muted);margin-bottom:20px;">
+      The <strong>only</strong> shared config is the one-time code. A hosted rendezvous
+      relay (baked-in default) matches the two peers, punches a direct P2P link
+      through both NATs, and drops out. If a direct punch can't form, traffic is
+      bridged through the relay — either way it's end-to-end encrypted.
+    </p>
 
-    <div class="peers-block">
-      <h3>Plaintext (LAN / trusted network)</h3>
-      <pre><code><span class="cm"># Peer B (receiver) — listens on :9000</span>
-./peer -listen :9000 -no-crypto
+    <div class="nat-diagram">
+      <pre>  Machine A (home Wi-Fi, NAT)            Machine B (cloud VM, different NAT)
+        │                                       │
+        │   p2p send report.pdf                 │   p2p 4-brave-tiger-comet
+        │        ╲                             ╱
+        │         ╲   1. both reach relay     ╱
+        │          ▼  (rendezvous by code)   ▼
+        │     ┌─────────────────────────────────┐
+        │     │  relay  129.153.24.33.nip.io     │   2. NAT hole-punch
+        │     └─────────────────────────────────┘
+        │          ╲   3. direct P2P link   ╱
+        ▼           ╲___________________╱  ▼
+        A  ◀═══════ encrypted, direct ═══════▶  B
+                 (relay bridges if punch fails)</pre>
+    </div>
 
-<span class="cm"># Peer A (sender) — dials, types lines to stdin</span>
-./peer -addr peer-b.local:9000 -no-crypto
-<span class="cm">&gt; hello world</span></code></pre>
+    <div class="peers-block" style="margin-top:20px;">
+      <h3>Real example — your laptop ↔ a cloud server</h3>
+      <pre><code><span class="cm"># On the cloud server (any network, behind NAT or public)</span>
+p2p 4-brave-tiger-comet          <span class="cm"># receives + saves report.pdf, sha256 verified</span>
+
+<span class="cm"># On your laptop (home Wi-Fi)</span>
+p2p send report.pdf
+<span class="cm"># ✓ Connected — peer online (direct P2P)</span>
+<span class="cm"># ✓ sent 2.9 MB in 0.7s (4.3 MB/s)</span></code></pre>
+      <p class="caption">No port-forwarding, no public IP, no firewall rules. Override the relay with <code>-relay host:9009</code>; force the relay path on hostile NATs with <code>P2P_FORCE_RELAY=1</code>.</p>
     </div>
 
     <div class="peers-block">
-      <h3>Encrypted first connect (PAKE code shared out-of-band)</h3>
-      <pre><code><span class="cm"># Both peers exchange a one-time code "snow-tiger-72" (e.g. via Signal)</span>
+      <h3>Measure the link (connect time, latency, throughput)</h3>
+      <pre><code>p2p bench                    <span class="cm"># machine A → prints a code</span>
+p2p bench 4-brave-tiger-comet  <span class="cm"># machine B</span>
+<span class="cm"># Connected : 372ms (direct P2P)</span>
+<span class="cm"># Latency   : 28ms (round-trip)</span>
+<span class="cm">#   SIZE      TIME    THROUGHPUT</span>
+<span class="cm">#   1.0 MB    410ms   2.5 MB/s</span>
+<span class="cm">#   10.0 MB   3.6s    2.8 MB/s</span></code></pre>
+    </div>
+  </section>
 
-<span class="cm"># Peer B</span>
-./peer -listen :9000 -pake snow-tiger-72
+  <!-- 4b. Persistent / long-running -->
+  <section>
+    <h2>Persistent &amp; Long-Running P2P</h2>
+    <p style="color:var(--muted);margin-bottom:20px;">
+      For always-on nodes (a server that should stay reachable, or transfers that
+      must survive blips), run the relay as a service and lean on built-in
+      reconnect + write-ahead-log recovery.
+    </p>
 
-<span class="cm"># Peer A</span>
-./peer -addr peer-b.example.com:9000 -peer-name b -pake snow-tiger-72</code></pre>
+    <div class="peers-block">
+      <h3>1. Host your own always-on relay (systemd)</h3>
+      <pre><code><span class="cm"># build a linux relay and run it under systemd on a public host</span>
+GOOS=linux GOARCH=amd64 go build -o relay ./cmd/relay
+./relay -addr :9009 -tls -tls-cert fullchain.pem -tls-key privkey.pem
+
+<span class="cm"># point peers at it</span>
+p2p -relay your-host.example.com:9009 send</code></pre>
+      <p class="caption">A ready-made <code>systemd</code> unit lives in <code>deploy/</code> in the repo.</p>
     </div>
 
     <div class="peers-block">
-      <h3>Subsequent encrypted connects (no PAKE needed — keys already pinned)</h3>
-      <pre><code>./peer -addr peer-b.example.com:9000 -peer-name b</code></pre>
+      <h3>2. Auto-reconnect on drops</h3>
+      <pre><code><span class="cm"># A dropped link retries (direct, then relay) for 60s before giving up.</span>
+<span class="cm"># Pinned Ed25519 keys mean reconnects skip the code (fast KK handshake).</span>
+p2p 4-brave-tiger-comet
+<span class="cm"># ⚠ peer offline — reconnecting (up to 60s)…</span>
+<span class="cm"># ✓ peer back online (direct P2P)</span></code></pre>
     </div>
 
     <div class="peers-block">
-      <h3>With persistence (survives crashes)</h3>
-      <pre><code>./peer -addr peer-b.example.com:9000 -peer-name b -wal ~/.p2p/messages.wal</code></pre>
+      <h3>3. Crash-safe delivery (library, WAL)</h3>
+      <pre><code><span class="cm">// unacked messages are journaled and replayed after a restart</span>
+b, _ := broker.New(broker.Config{
+    Conn: c,
+    WAL:  wal,   <span class="cm">// open with wal.Open("/var/lib/p2p/out.wal", true)</span>
+})</code></pre>
+      <p class="caption">Run a long-lived node as a service (systemd / a container) and it will keep rendezvousing under the same code; the relay re-matches peers whenever they reconnect.</p>
+    </div>
+  </section>
+
+  <!-- 4c. Use from any language -->
+  <section>
+    <h2>Use From Any Language</h2>
+    <p style="color:var(--muted);margin-bottom:20px;">
+      <code>p2p</code> is a single self-contained binary. Any language that can spawn a
+      process can drive it — no bindings required. Generate/parse the code on one
+      side, pass it to the other out-of-band, and stream files or messages.
+    </p>
+
+    <div class="peers-block">
+      <h3>Python</h3>
+      <pre><code><span class="kw">import</span> subprocess, re
+
+<span class="cm"># sender: capture the code, then it transfers movie.mp4</span>
+p = subprocess.Popen([<span class="str">"p2p"</span>, <span class="str">"send"</span>, <span class="str">"movie.mp4"</span>],
+                     stdout=subprocess.PIPE, text=<span class="kw">True</span>)
+<span class="kw">for</span> line <span class="kw">in</span> p.stdout:
+    m = re.search(<span class="str">r"\d+-\w+-\w+-\w+"</span>, line)
+    <span class="kw">if</span> m:
+        code = m.group(0)
+        <span class="kw">print</span>(<span class="str">"share this code:"</span>, code)
+        <span class="kw">break</span>
+p.wait()
+
+<span class="cm"># receiver elsewhere: subprocess.run(["p2p", code])</span></code></pre>
+    </div>
+
+    <div class="peers-block">
+      <h3>Node.js</h3>
+      <pre><code><span class="kw">const</span> { spawn } = <span class="fn">require</span>(<span class="str">"child_process"</span>);
+
+<span class="cm">// receiver: save whatever the peer sends into the current dir</span>
+<span class="kw">const</span> p = <span class="fn">spawn</span>(<span class="str">"p2p"</span>, [<span class="str">"4-brave-tiger-comet"</span>], { stdio: <span class="str">"inherit"</span> });
+p.<span class="fn">on</span>(<span class="str">"exit"</span>, code =&gt; <span class="fn">console</span>.log(<span class="str">"done"</span>, code));</code></pre>
+    </div>
+
+    <div class="peers-block">
+      <h3>Shell / cron (any OS)</h3>
+      <pre><code><span class="cm"># pipe arbitrary program output to a peer over an interactive chat session</span>
+echo <span class="str">"backup finished at $(date)"</span> | p2p 4-brave-tiger-comet
+
+<span class="cm"># scheduled file push</span>
+p2p send /var/backups/db.dump.gz</code></pre>
+      <p class="caption">Prefer a native API? Import the Go packages directly (<code>pkg/broker</code>, <code>pkg/conn</code>, <code>pkg/crypto</code>, <code>pkg/transfer</code>) — see “Using as a Library”.</p>
     </div>
   </section>
 
@@ -677,31 +783,35 @@ Op values:
   <!-- 11. Download -->
   <section>
     <h2>Download</h2>
-    <div class="dl-grid">
+    <p style="color:var(--muted);margin-bottom:20px;">Easiest: the one-line installer grabs the right <code>p2p</code> binary for your OS/arch and puts it on PATH.</p>
+    <pre><code><span class="cm"># macOS / Linux</span>
+curl -fsSL https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.sh | sh
+<span class="cm"># Windows (PowerShell)</span>
+irm https://raw.githubusercontent.com/jdp5949/p2p-messaging/main/install.ps1 | iex</code></pre>
+    <div class="dl-grid" style="margin-top:20px;">
       <div class="dl-card">
-        <h3>Linux</h3>
+        <h3>Prebuilt binaries</h3>
         <ul>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-linux-amd64">peer &mdash; linux/amd64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-linux-amd64">relay &mdash; linux/amd64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-linux-amd64">bench &mdash; linux/amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-arm64">p2p &mdash; macOS arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-darwin-amd64">p2p &mdash; macOS amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-amd64">p2p &mdash; linux amd64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-linux-arm64">p2p &mdash; linux arm64</a></li>
+          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/p2p-windows-amd64.exe">p2p &mdash; windows amd64</a></li>
         </ul>
       </div>
       <div class="dl-card">
-        <h3>macOS</h3>
+        <h3>With Go</h3>
         <ul>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/peer-darwin-arm64">peer &mdash; darwin/arm64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/relay-darwin-arm64">relay &mdash; darwin/arm64</a></li>
-          <li><a href="https://github.com/jdp5949/p2p-messaging/releases/latest/download/bench-darwin-arm64">bench &mdash; darwin/arm64</a></li>
+          <li style="font-size:0.85rem;color:var(--muted);">go install github.com/jdp5949/p2p-messaging/cmd/p2p@latest</li>
         </ul>
+        <p style="color:var(--muted); font-size:0.85rem; margin-top:10px;">Each release also ships <code>peer</code>, <code>relay</code>, and <code>bench</code> for the same platforms.</p>
       </div>
       <div class="dl-card">
         <h3>Build from Source</h3>
         <p style="color:var(--muted); font-size:0.88rem; margin-bottom:10px;">Requires Go 1.21+</p>
         <ul>
           <li style="font-size:0.85rem;color:var(--muted);">git clone https://github.com/jdp5949/p2p-messaging</li>
-          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/peer</li>
-          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/relay</li>
-          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/bench</li>
+          <li style="font-size:0.85rem;color:var(--muted);">go build ./cmd/p2p</li>
         </ul>
       </div>
     </div>
