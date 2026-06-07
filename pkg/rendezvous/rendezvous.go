@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -105,12 +106,16 @@ func Dial(ctx context.Context, opt Options) (*Result, error) {
 	// Attempt a direct hole-punch, then VALIDATE it is truly bidirectional.
 	// A simultaneous-open can yield a half-open / mismatched pair that "dials
 	// ok" but cannot carry traffic both ways; validation catches that.
+	// P2P_FORCE_RELAY=1 skips the punch entirely (forces the bridge path) —
+	// useful behind hostile NATs and for exercising the bridge in tests.
 	var direct net.Conn
-	if c, perr := holepunch.AttemptPunch(partner, localPort, opt.PunchTimeout); perr == nil {
-		if verr := validatePunch(c); verr == nil {
-			direct = c
-		} else {
-			c.Close()
+	if os.Getenv("P2P_FORCE_RELAY") != "1" {
+		if c, perr := holepunch.AttemptPunch(partner, localPort, opt.PunchTimeout); perr == nil {
+			if verr := validatePunch(c); verr == nil {
+				direct = c
+			} else {
+				c.Close()
+			}
 		}
 	}
 

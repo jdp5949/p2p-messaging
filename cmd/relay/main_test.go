@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"strings"
@@ -171,6 +173,46 @@ func TestRelayFallbackBridge(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// TestRelayBridgeNoTruncation guards against the control-phase byte cap
+// (sessionIDMaxBytes) truncating the bridged stream of the first (parked) peer.
+// It pushes well over that cap from A→B and verifies every byte arrives.
+func TestRelayBridgeNoTruncation(t *testing.T) {
+	relayAddr := startTestRelay(t)
+	sessionID := "test-session-notrunc"
+
+	connA, rA := connectPeer(t, relayAddr, sessionID, nil) // first → parked → capped reader
+	defer connA.Close()
+	connB, rB := connectPeer(t, relayAddr, sessionID, nil)
+	defer connB.Close()
+
+	readLine(t, connA, rA)
+	readLine(t, connB, rB)
+	readLine(t, connA, rA)
+	readLine(t, connB, rB)
+
+	fmt.Fprintf(connA, "PUNCH_FAIL\n")
+	fmt.Fprintf(connB, "PUNCH_FAIL\n")
+	if got := readLine(t, connA, rA); got != "BRIDGE" {
+		t.Fatalf("A decision = %q, want BRIDGE", got)
+	}
+	if got := readLine(t, connB, rB); got != "BRIDGE" {
+		t.Fatalf("B decision = %q, want BRIDGE", got)
+	}
+
+	// Send 4 KB (>> sessionIDMaxBytes=256) from A to B.
+	payload := bytes.Repeat([]byte("ABCDEFGH"), 512)                        // 4096 bytes
+	go func() { connA.Write(payload); connA.(*net.TCPConn).CloseWrite() }() //nolint:errcheck
+
+	connB.SetReadDeadline(time.Now().Add(15 * time.Second)) //nolint:errcheck
+	got, err := io.ReadAll(rB)
+	if err != nil {
+		t.Fatalf("B read: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("bridge truncated/corrupted: got %d bytes, want %d", len(got), len(payload))
 	}
 }
 
