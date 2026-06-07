@@ -21,9 +21,10 @@ var ackTimeout = 30 * time.Second
 // directory or multiple paths are streamed as a tar archive. After the trailer,
 // Send blocks until the receiver returns a DONE message on in, guaranteeing the
 // data was saved+verified before the caller exits.
-func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) error {
+func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) (Stats, error) {
+	start := time.Now()
 	if len(paths) == 0 {
-		return fmt.Errorf("transfer: no paths")
+		return Stats{}, fmt.Errorf("transfer: no paths")
 	}
 
 	var (
@@ -37,13 +38,13 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 	if len(paths) == 1 {
 		fi, err := os.Stat(paths[0])
 		if err != nil {
-			return err
+			return Stats{}, err
 		}
 		if fi.Mode().IsRegular() {
 			single = true
 			f, err := os.Open(paths[0])
 			if err != nil {
-				return err
+				return Stats{}, err
 			}
 			source, closeFn, size = f, f.Close, fi.Size()
 			hdr = Header{Kind: "file", Name: filepath.Base(paths[0]), Size: size, Mode: uint32(fi.Mode())}
@@ -63,7 +64,7 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 	defer closeFn()
 
 	if err := send(protocol.ContentJSON, marshalHeader(hdr)); err != nil {
-		return err
+		return Stats{}, err
 	}
 
 	h := sha256.New()
@@ -76,7 +77,7 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			if err := send(protocol.ContentBinary, encodeChunk(offset, chunk)); err != nil {
-				return err
+				return Stats{}, err
 			}
 			offset += int64(n)
 			if progress != nil {
@@ -87,13 +88,13 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 			break
 		}
 		if rerr != nil {
-			return rerr
+			return Stats{}, rerr
 		}
 	}
 
 	tr := Trailer{SHA256: hex.EncodeToString(h.Sum(nil)), Total: offset}
 	if err := send(protocol.ContentJSON, marshalTrailer(tr)); err != nil {
-		return err
+		return Stats{}, err
 	}
 
 	// Wait for the receiver's DONE ack, but don't hang forever if the peer
@@ -105,13 +106,13 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 		select {
 		case m, ok := <-in:
 			if !ok {
-				return fmt.Errorf("transfer: peer closed before acknowledging")
+				return Stats{}, fmt.Errorf("transfer: peer closed before acknowledging")
 			}
 			if classify(m) == "done" {
-				return nil
+				return Stats{Bytes: offset, Duration: time.Since(start)}, nil
 			}
 		case <-timer.C:
-			return fmt.Errorf("transfer: peer did not acknowledge within %s — is the other side running the latest p2p?", ackTimeout)
+			return Stats{}, fmt.Errorf("transfer: peer did not acknowledge within %s — is the other side running the latest p2p?", ackTimeout)
 		}
 	}
 }

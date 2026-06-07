@@ -25,7 +25,7 @@ func TestSendTimesOutWithoutAck(t *testing.T) {
 
 	// Receiver never sends DONE.
 	in := make(chan Msg) // never delivers
-	err := Send(func(protocol.ContentType, []byte) error { return nil }, in, []string{path}, nil)
+	_, err := Send(func(protocol.ContentType, []byte) error { return nil }, in, []string{path}, nil)
 	if err == nil {
 		t.Fatal("expected timeout error when peer never acknowledges")
 	}
@@ -51,7 +51,7 @@ func TestSendSingleFileSequence(t *testing.T) {
 	done <- Msg{protocol.ContentJSON, marshalDone()}
 	close(done)
 
-	if err := Send(send, done, []string{path}, nil); err != nil {
+	if _, err := Send(send, done, []string{path}, nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
