@@ -42,3 +42,17 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func TestChatHelloKind(t *testing.T) {
+	m := Msg{protocol.ContentJSON, ChatHello()}
+	if got := Kind(m); got != "chat" {
+		t.Fatalf("Kind(ChatHello) = %q, want chat", got)
+	}
+	// Kind must match classify for all kinds (it's the exported alias).
+	if Kind(Msg{protocol.ContentBinary, make([]byte, 8)}) != "data" {
+		t.Fatal("Kind data mismatch")
+	}
+	if Kind(Msg{protocol.ContentText, []byte("hi")}) != "other" {
+		t.Fatal("Kind text should be other")
+	}
+}

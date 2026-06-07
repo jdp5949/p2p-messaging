@@ -57,6 +57,17 @@ func marshalHeader(h Header) []byte   { h.T = "header"; b, _ := json.Marshal(h);
 func marshalTrailer(t Trailer) []byte { t.T = "trailer"; b, _ := json.Marshal(t); return b }
 func marshalDone() []byte             { b, _ := json.Marshal(map[string]string{"t": "done"}); return b }
 
+// ChatHello is the control message a chat initiator sends immediately on
+// connect, so the joining peer instantly knows the session is interactive chat
+// (not a file transfer) and can show "connected" and accept typed input right
+// away — even if the initiator never sends anything. It is a ContentJSON
+// payload; pair it with protocol.ContentJSON when sending.
+func ChatHello() []byte { b, _ := json.Marshal(map[string]string{"t": "chat"}); return b }
+
+// Kind classifies an inbound message into one of: "header", "trailer", "done",
+// "data", "chat", or "other" (plain chat text falls under "other").
+func Kind(m Msg) string { return classify(m) }
+
 // encodeChunk prefixes data with an 8-byte big-endian offset.
 func encodeChunk(offset int64, data []byte) []byte {
 	buf := make([]byte, 8+len(data))
