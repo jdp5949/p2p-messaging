@@ -42,6 +42,7 @@ type peerInfo struct {
 type readyPeer struct {
 	conn   net.Conn
 	reader *bufio.Reader
+	lr     *io.LimitedReader // the byte cap used for the control phase; lifted before bridging
 	info   holepunch.Info
 	// matched receives the partner's data.
 	matched chan readyPeer
@@ -98,8 +99,10 @@ func main() {
 
 // handle runs the full lifecycle for one peer connection.
 func handle(c net.Conn) {
-	limited := io.LimitedReader{R: c, N: sessionIDMaxBytes + 1}
-	reader := bufio.NewReader(&limited)
+	// Cap reads during the control phase to guard against an unbounded
+	// session-id line. The cap is lifted before bridging (see coordinate).
+	limited := &io.LimitedReader{R: c, N: sessionIDMaxBytes + 1}
+	reader := bufio.NewReader(limited)
 
 	// Line 1: session ID.
 	line, err := reader.ReadString('\n')
@@ -133,6 +136,7 @@ func handle(c net.Conn) {
 	me := &readyPeer{
 		conn:    c,
 		reader:  reader,
+		lr:      limited,
 		info:    myInfo,
 		matched: make(chan readyPeer, 1),
 	}
@@ -232,6 +236,11 @@ func coordinate(first, second *readyPeer, sessionID string) {
 	log.Printf("[RELAY] session=%s punch not validated, BRIDGE", sessionID)
 	a.Write([]byte("BRIDGE\n")) //nolint:errcheck
 	b.Write([]byte("BRIDGE\n")) //nolint:errcheck
+	// Lift the control-phase byte cap on the first peer's reader; otherwise the
+	// bridge would truncate that peer's stream at sessionIDMaxBytes.
+	if first.lr != nil {
+		first.lr.N = 1 << 62
+	}
 	// Pass bufio readers so any buffered bytes flow through the bridge.
 	bridge2(a, b, first.reader, bReader, sessionID)
 }
