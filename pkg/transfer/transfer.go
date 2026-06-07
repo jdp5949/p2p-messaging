@@ -46,11 +46,13 @@ type OverwriteFn func(name string) bool
 
 // Header is the first message of a transfer.
 type Header struct {
-	T    string `json:"t"`
-	Kind string `json:"kind"` // "file" | "archive"
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Mode uint32 `json:"mode"`
+	T       string `json:"t"`
+	Kind    string `json:"kind"` // "file" | "archive"
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	Mode    uint32 `json:"mode"`
+	SHA256  string `json:"sha256,omitempty"`  // parallel: whole-payload hash
+	Streams int    `json:"streams,omitempty"` // parallel: number of data streams
 }
 
 // Trailer ends the data stream.
