@@ -18,6 +18,7 @@ import (
 	"github.com/jdp5949/p2p-messaging/pkg/codephrase"
 	"github.com/jdp5949/p2p-messaging/pkg/conn"
 	"github.com/jdp5949/p2p-messaging/pkg/crypto"
+	"github.com/jdp5949/p2p-messaging/pkg/humanize"
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 	"github.com/jdp5949/p2p-messaging/pkg/transfer"
 )
@@ -31,6 +32,7 @@ func main() {
 	idPath := flag.String("id", "~/.p2p/id_ed25519", "identity key path")
 	knownPath := flag.String("known", "~/.p2p/known_peers", "known_peers path")
 	noCrypto := flag.Bool("no-crypto", false, "disable Noise encryption (dev only)")
+	debug := flag.Bool("debug", false, "verbose metrics (latency, connect time, path)")
 	flag.Parse()
 
 	args := flag.Args()
@@ -53,6 +55,9 @@ func main() {
 	case "relay":
 		fmt.Fprintln(os.Stderr, "run the relay with: relay -addr :9009  (see cmd/relay)")
 		os.Exit(2)
+	case "bench":
+		runBench(*relayAddr, !*noTLS, *idPath, *knownPath, args[1:])
+		return
 	default:
 		code = args[0]
 		initiator = false
@@ -87,6 +92,7 @@ func main() {
 	}
 
 	fmt.Println("Connecting…")
+	connStart := time.Now()
 	c, err := conn.New(conn.Config{
 		DialFunc:     dialer.DialFunc,
 		ReadTimeout:  30 * time.Second,
@@ -99,6 +105,10 @@ func main() {
 	// After the first successful connect, switch XX -> KK for reconnects.
 	if hsCfg != nil {
 		hsCfg.PAKECode = ""
+	}
+
+	if *debug {
+		fmt.Fprintf(os.Stderr, "connected in %s (%s)\n", humanize.Dur(time.Since(connStart)), connMode(dialer))
 	}
 
 	inbound := make(chan transfer.Msg, 128)
@@ -127,6 +137,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "✗ peer lost — gave up after 60s.")
 			close(dropped)
 		},
+		OnAck: func(_ uint64, rtt time.Duration) {
+			if *debug {
+				fmt.Fprintf(os.Stderr, "  ✓ delivered (%s)\n", humanize.Dur(rtt))
+			}
+		},
 		PingInterval: 10 * time.Second,
 	})
 	fatalOn(err, "broker")
@@ -140,18 +155,22 @@ func main() {
 	if len(sendPaths) > 0 {
 		inTransfer.Store(true)
 		fmt.Fprintf(os.Stderr, "Sending %d item(s) (%s)…\n", len(sendPaths), connMode(dialer))
-		errc := make(chan error, 1)
-		go func() { _, e := transfer.Send(sendMsg, inbound, sendPaths, progressBar); errc <- e }()
-		var serr error
+		type sr struct {
+			st  transfer.Stats
+			err error
+		}
+		errc := make(chan sr, 1)
+		go func() { st, e := transfer.Send(sendMsg, inbound, sendPaths, progressBar); errc <- sr{st, e} }()
+		var r sr
 		select {
-		case serr = <-errc:
+		case r = <-errc:
 		case <-dropped:
-			serr = fmt.Errorf("peer lost during transfer")
+			r.err = fmt.Errorf("peer lost during transfer")
 		}
 		fmt.Fprintln(os.Stderr)
 		_ = b.Close()
-		fatalOn(serr, "send")
-		fmt.Fprintln(os.Stderr, "✓ sent and verified by peer")
+		fatalOn(r.err, "send")
+		fmt.Fprintf(os.Stderr, "✓ sent %s in %s (%s)\n", humanize.Bytes(r.st.Bytes), humanize.Dur(r.st.Duration), humanize.Rate(r.st.Bytes, r.st.Duration))
 		return
 	}
 
@@ -199,12 +218,13 @@ func main() {
 					close(quit)
 					return
 				}
-				saved, _, rerr := transfer.Receive(sendMsg, merged, dest, promptOverwrite, progressBar)
+				saved, st, rerr := transfer.Receive(sendMsg, merged, dest, promptOverwrite, progressBar)
 				fmt.Fprintln(os.Stderr)
 				if rerr != nil {
 					fmt.Fprintf(os.Stderr, "receive failed: %v\n", rerr)
 				} else {
-					fmt.Fprintf(os.Stderr, "✓ saved %s (sha256 verified)\n", saved)
+					fmt.Fprintf(os.Stderr, "✓ saved %s — %s in %s (%s), sha256 ok\n", saved,
+						humanize.Bytes(st.Bytes), humanize.Dur(st.Duration), humanize.Rate(st.Bytes, st.Duration))
 				}
 				close(quit)
 				return
