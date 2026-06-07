@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/jdp5949/p2p-messaging/pkg/humanize"
 )
 
 // formatProgress renders a single-line progress string. total==0 => unknown
@@ -12,13 +14,14 @@ import (
 func formatProgress(done, total int64) string {
 	if total > 0 {
 		pct := float64(done) / float64(total) * 100
-		bars := int(pct / 5) // 20-wide bar
+		bars := int(pct / 5)
 		if bars > 20 {
 			bars = 20
 		}
-		return fmt.Sprintf("[%-20s] %5.1f%% (%d/%d)", strings.Repeat("=", bars), pct, done, total)
+		return fmt.Sprintf("[%-20s] %5.1f%% (%s / %s)", strings.Repeat("=", bars), pct,
+			humanize.Bytes(done), humanize.Bytes(total))
 	}
-	return fmt.Sprintf("%d bytes", done)
+	return humanize.Bytes(done)
 }
 
 // progressBar prints formatProgress to stderr in place.
