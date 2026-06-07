@@ -391,3 +391,37 @@ func TestPingPong(t *testing.T) {
 		t.Errorf("expected MsgPong, got %v", pong.Header.MsgType)
 	}
 }
+
+func TestOnAckReportsRTT(t *testing.T) {
+	c, srv := pipeConn(t)
+	defer srv.Close()
+
+	acked := make(chan time.Duration, 1)
+	b, err := New(Config{
+		Conn:       c,
+		ACKTimeout: 5 * time.Second,
+		OnAck:      func(_ uint64, rtt time.Duration) { acked <- rtt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	resCh := make(chan uint64, 1)
+	go func() {
+		id, _ := b.Send(protocol.ContentText, protocol.PriorityNormal, []byte("hi"))
+		resCh <- id
+	}()
+	sent := readOneMsg(t, srv)
+	<-resCh
+	writeMsg(t, srv, protocol.Message{Header: protocol.Header{MsgID: sent.Header.MsgID, MsgType: protocol.MsgACK}})
+
+	select {
+	case rtt := <-acked:
+		if rtt < 0 {
+			t.Fatalf("rtt negative: %v", rtt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnAck not called")
+	}
+}

@@ -60,6 +60,10 @@ type Config struct {
 	// OnReconnected is called when a reconnect attempt succeeds.
 	OnReconnected func()
 
+	// OnAck is called when an ACK is received for a sent message, with the
+	// round-trip time from send to ACK. Optional.
+	OnAck func(msgID uint64, rtt time.Duration)
+
 	// WAL: optional write-ahead log for crash-recovery of unacked outbound messages.
 	// nil = in-memory only (backward compatible).
 	WAL *wal.WAL
@@ -232,7 +236,7 @@ func (b *Broker) Send(ct protocol.ContentType, priority protocol.Priority, paylo
 	if b.cfg.WAL != nil {
 		packed := packWALPayload(ct, priority, payload)
 		if err := b.cfg.WAL.Append(msgID, packed); err != nil {
-			b.freeSlot(msgID)
+			_, _ = b.freeSlot(msgID)
 			return 0, err
 		}
 	}
@@ -240,7 +244,7 @@ func (b *Broker) Send(ct protocol.ContentType, priority protocol.Priority, paylo
 	for _, f := range frags {
 		if err := b.conn.WriteMsg(f); err != nil {
 			// Free slot so caller can retry cleanly without duplicate in-flight.
-			b.freeSlot(msgID)
+			_, _ = b.freeSlot(msgID)
 			return 0, err
 		}
 	}
@@ -291,11 +295,13 @@ func (b *Broker) enqueue(msgID uint64, frags []protocol.Message) error {
 	return nil
 }
 
-// freeSlot marks the slot for msgID as free and signals waiting enqueue callers.
-func (b *Broker) freeSlot(msgID uint64) {
+// freeSlot marks the slot for msgID free; returns the slot's sendTime and
+// whether it was found. Signals waiting enqueue callers.
+func (b *Broker) freeSlot(msgID uint64) (time.Time, bool) {
 	b.mu.Lock()
 	for i := range b.ring {
 		if b.ring[i].active && b.ring[i].msgID == msgID {
+			st := b.ring[i].sendTime
 			b.ring[i].active = false
 			b.freeIdx = append(b.freeIdx, i)
 			if b.cfg.WAL != nil {
@@ -304,10 +310,11 @@ func (b *Broker) freeSlot(msgID uint64) {
 			}
 			b.mu.Unlock()
 			b.cond.Signal()
-			return
+			return st, true
 		}
 	}
 	b.mu.Unlock()
+	return time.Time{}, false
 }
 
 // readLoop reads messages from the connection.
@@ -426,11 +433,14 @@ func (b *Broker) replayUnacked() {
 func (b *Broker) dispatch(msg protocol.Message) {
 	switch msg.Header.MsgType {
 	case protocol.MsgACK:
-		b.freeSlot(msg.Header.MsgID)
+		st, ok := b.freeSlot(msg.Header.MsgID)
+		if ok && b.cfg.OnAck != nil {
+			b.cfg.OnAck(msg.Header.MsgID, time.Since(st))
+		}
 
 	case protocol.MsgNACK:
 		msgID := msg.Header.MsgID
-		b.freeSlot(msgID)
+		_, _ = b.freeSlot(msgID)
 		if b.cfg.OnDead != nil {
 			b.cfg.OnDead(msgID, errors.New("broker: NACK received"))
 		}

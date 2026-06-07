@@ -15,9 +15,16 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
+
+// Stats summarizes a completed transfer.
+type Stats struct {
+	Bytes    int64
+	Duration time.Duration
+}
 
 // ChunkSize is the DATA payload size (excluding the 8-byte offset prefix).
 const ChunkSize = 512 * 1024
