@@ -92,7 +92,7 @@ func runBench(relayAddr string, useTLS bool, idPath, knownPath string, args []st
 	} else {
 		code = codephrase.Generate()
 		initiator = true
-		fmt.Printf("Code is: %s\n", code)
+		fmt.Printf("Bench code: %s\n", code)
 		fmt.Printf("On the other computer run:\n\n    p2p bench %s\n\n", code)
 	}
 
@@ -173,6 +173,9 @@ func runBench(relayAddr string, useTLS bool, idPath, knownPath string, args []st
 	} else {
 		runBenchResponder(sendMsg, inbound)
 	}
+	// Give the last control message (DONE/benchdone) a moment to flush before
+	// the deferred b.Close() tears down the connection.
+	time.Sleep(300 * time.Millisecond)
 }
 
 // runBenchInitiator pushes each payload size over the live connection and prints
@@ -181,13 +184,9 @@ func runBenchInitiator(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg, r
 	sizes, err := parseSizes(sizesCSV)
 	fatalOn(err, "sizes")
 
-	// Announce the plan so the responder enters bench mode.
-	plan := benchPlan{T: "bench", Sizes: sizes}
-	pj, _ := json.Marshal(plan)
-	fatalOn(sendMsg(protocol.ContentJSON, pj), "plan")
-
-	// Drain any ACKs already queued (e.g. for the plan) so the latency probe
-	// measures the round-trip of the ping itself.
+	// Drain any stale ACKs, then announce the plan and measure latency as the
+	// round-trip of the plan message's own ACK (no separate ping needed — that
+	// keeps the data stream clean for the responder's sequential Receive loop).
 	for draining := true; draining; {
 		select {
 		case <-rtt:
@@ -195,14 +194,13 @@ func runBenchInitiator(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg, r
 			draining = false
 		}
 	}
-
-	// Latency probe: one tiny text message, read its ACK round-trip.
+	plan := benchPlan{T: "bench", Sizes: sizes}
+	pj, _ := json.Marshal(plan)
+	fatalOn(sendMsg(protocol.ContentJSON, pj), "plan")
 	var latency time.Duration
-	if err := sendMsg(protocol.ContentText, []byte("ping")); err == nil {
-		select {
-		case latency = <-rtt:
-		case <-time.After(5 * time.Second):
-		}
+	select {
+	case latency = <-rtt:
+	case <-time.After(5 * time.Second):
 	}
 
 	fmt.Printf("Connected : %s (%s)\n", humanize.Dur(connectTime), mode)
@@ -232,14 +230,20 @@ func runBenchInitiator(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg, r
 	fmt.Fprintln(os.Stderr, "bench complete")
 }
 
-// runBenchResponder receives the benchmark payloads. Exactly one goroutine (this
-// one) consumes the inbound channel; per-transfer Receive calls are fed via a
-// dedicated channel that always starts with the transfer's header.
+// runBenchResponder receives the benchmark payloads. The bench plan tells us
+// exactly how many transfers to expect, so we call transfer.Receive that many
+// times directly on the inbound channel. Receive stops at each transfer's
+// trailer and never over-reads, so the next call cleanly picks up the next
+// transfer's header — no forwarding goroutine, no message-routing race.
 func runBenchResponder(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg) {
-	// First message must be the bench plan.
 	first := <-inbound
 	if transfer.Kind(first) != "bench" {
 		fmt.Fprintln(os.Stderr, "bench: peer did not start a benchmark (run `p2p bench` on the other side)")
+		return
+	}
+	var plan benchPlan
+	if err := json.Unmarshal(first.Payload, &plan); err != nil {
+		fmt.Fprintf(os.Stderr, "bench: bad plan: %v\n", err)
 		return
 	}
 
@@ -247,41 +251,12 @@ func runBenchResponder(sendMsg transfer.SendFunc, inbound <-chan transfer.Msg) {
 	fatalOn(err, "tempdir")
 	defer os.RemoveAll(tmp)
 
-	var cur chan transfer.Msg
-	recvErr := make(chan error, 1)
-	receiving := false
-
-	for {
-		m := <-inbound
-		switch transfer.Kind(m) {
-		case "benchdone":
-			fmt.Fprintln(os.Stderr, "bench complete")
+	fmt.Fprintf(os.Stderr, "Receiving %d benchmark transfer(s)…\n", len(plan.Sizes))
+	for i := range plan.Sizes {
+		if _, _, e := transfer.Receive(sendMsg, inbound, tmp, func(string) bool { return true }, nil); e != nil {
+			fmt.Fprintf(os.Stderr, "bench: transfer %d failed: %v\n", i+1, e)
 			return
-		case "header":
-			cur = make(chan transfer.Msg, 256)
-			cur <- m
-			receiving = true
-			go func(in chan transfer.Msg) {
-				_, _, e := transfer.Receive(sendMsg, in, tmp, func(string) bool { return true }, nil)
-				recvErr <- e
-			}(cur)
-		default:
-			// Forward data/trailer/etc. into the active receive; ignore stray
-			// messages (e.g. the latency ping) when no transfer is in flight.
-			if receiving {
-				cur <- m
-			}
-		}
-
-		// Reap a finished transfer without blocking the inbound loop.
-		select {
-		case e := <-recvErr:
-			receiving = false
-			if e != nil {
-				fmt.Fprintf(os.Stderr, "bench: receive failed: %v\n", e)
-				return
-			}
-		default:
 		}
 	}
+	fmt.Fprintln(os.Stderr, "bench complete")
 }

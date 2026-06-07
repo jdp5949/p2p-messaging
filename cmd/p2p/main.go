@@ -138,7 +138,9 @@ func main() {
 			close(dropped)
 		},
 		OnAck: func(_ uint64, rtt time.Duration) {
-			if *debug {
+			// Only report per-message delivery for chat; during a file transfer
+			// this would fire per chunk and bury the progress bar.
+			if *debug && !inTransfer.Load() {
 				fmt.Fprintf(os.Stderr, "  ✓ delivered (%s)\n", humanize.Dur(rtt))
 			}
 		},
