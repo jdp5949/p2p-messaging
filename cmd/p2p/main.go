@@ -33,7 +33,7 @@ func main() {
 	knownPath := flag.String("known", "~/.p2p/known_peers", "known_peers path")
 	noCrypto := flag.Bool("no-crypto", false, "disable Noise encryption (dev only)")
 	debug := flag.Bool("debug", false, "verbose metrics (latency, connect time, path)")
-	streams := flag.Int("streams", 4, "parallel connections for file transfer (1 = single stream)")
+	streams := flag.Int("streams", 8, "parallel connections for file transfer (1 = single stream)")
 	flag.Parse()
 
 	args := flag.Args()

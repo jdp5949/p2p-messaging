@@ -98,7 +98,7 @@ func runBench(relayAddr string, useTLS bool, idPath, knownPath string, args []st
 
 	// Scan args for `-sizes <csv>` and `-streams <n>`.
 	sizesCSV := defaultBenchSizes
-	streamsN := 4
+	streamsN := 8
 	for i := 0; i < len(args); i++ {
 		if args[i] == "-sizes" && i+1 < len(args) {
 			sizesCSV = args[i+1]
