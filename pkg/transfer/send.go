@@ -7,9 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
+
+// ackTimeout bounds how long Send waits for the receiver's DONE acknowledgement
+// after the trailer, so an old/incompatible peer cannot hang the sender forever.
+// Var (not const) so tests can shorten it.
+var ackTimeout = 30 * time.Second
 
 // Send transmits paths via send. A single regular file is streamed raw; a
 // directory or multiple paths are streamed as a tar archive. After the trailer,
@@ -90,10 +96,22 @@ func Send(send SendFunc, in <-chan Msg, paths []string, progress ProgressFn) err
 		return err
 	}
 
-	for m := range in {
-		if classify(m) == "done" {
-			return nil
+	// Wait for the receiver's DONE ack, but don't hang forever if the peer
+	// never acknowledges (e.g. it is running an old/incompatible p2p that does
+	// not understand the transfer protocol).
+	timer := time.NewTimer(ackTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case m, ok := <-in:
+			if !ok {
+				return fmt.Errorf("transfer: peer closed before acknowledging")
+			}
+			if classify(m) == "done" {
+				return nil
+			}
+		case <-timer.C:
+			return fmt.Errorf("transfer: peer did not acknowledge within %s — is the other side running the latest p2p?", ackTimeout)
 		}
 	}
-	return fmt.Errorf("transfer: peer closed before acknowledging")
 }
