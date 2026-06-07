@@ -141,7 +141,7 @@ func main() {
 		inTransfer.Store(true)
 		fmt.Fprintf(os.Stderr, "Sending %d item(s) (%s)…\n", len(sendPaths), connMode(dialer))
 		errc := make(chan error, 1)
-		go func() { errc <- transfer.Send(sendMsg, inbound, sendPaths, progressBar) }()
+		go func() { _, e := transfer.Send(sendMsg, inbound, sendPaths, progressBar); errc <- e }()
 		var serr error
 		select {
 		case serr = <-errc:
@@ -199,7 +199,7 @@ func main() {
 					close(quit)
 					return
 				}
-				saved, rerr := transfer.Receive(sendMsg, merged, dest, promptOverwrite, progressBar)
+				saved, _, rerr := transfer.Receive(sendMsg, merged, dest, promptOverwrite, progressBar)
 				fmt.Fprintln(os.Stderr)
 				if rerr != nil {
 					fmt.Fprintf(os.Stderr, "receive failed: %v\n", rerr)

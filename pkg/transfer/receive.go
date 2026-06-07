@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jdp5949/p2p-messaging/pkg/protocol"
 )
@@ -17,22 +18,23 @@ import (
 // destDir/<name> (consulting overwrite when it exists, keeping "<name>.part" if
 // declined), or for "archive" unpacks the tar into destDir. On success it sends
 // a DONE ack via send and returns the saved path.
-func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn, progress ProgressFn) (string, error) {
+func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn, progress ProgressFn) (string, Stats, error) {
+	start := time.Now()
 	first, ok := <-in
 	if !ok {
-		return "", fmt.Errorf("transfer: stream closed before header")
+		return "", Stats{}, fmt.Errorf("transfer: stream closed before header")
 	}
 	if classify(first) != "header" {
-		return "", fmt.Errorf("transfer: expected header, got %s", classify(first))
+		return "", Stats{}, fmt.Errorf("transfer: expected header, got %s", classify(first))
 	}
 	var hdr Header
 	if err := json.Unmarshal(first.Payload, &hdr); err != nil {
-		return "", fmt.Errorf("transfer: bad header: %w", err)
+		return "", Stats{}, fmt.Errorf("transfer: bad header: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(destDir, ".p2p-recv-*")
 	if err != nil {
-		return "", err
+		return "", Stats{}, err
 	}
 	tmpName := tmp.Name()
 	removeTmp := func() { _ = tmp.Close(); _ = os.Remove(tmpName) }
@@ -44,11 +46,11 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 			off, data, derr := decodeChunk(m.Payload)
 			if derr != nil {
 				removeTmp()
-				return "", derr
+				return "", Stats{}, derr
 			}
 			if _, werr := tmp.WriteAt(data, off); werr != nil {
 				removeTmp()
-				return "", werr
+				return "", Stats{}, werr
 			}
 			if progress != nil {
 				progress(off+int64(len(data)), hdr.Size)
@@ -57,7 +59,7 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 			var tr Trailer
 			if err := json.Unmarshal(m.Payload, &tr); err != nil {
 				removeTmp()
-				return "", err
+				return "", Stats{}, err
 			}
 			trailer = &tr
 		}
@@ -67,22 +69,22 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 	}
 	if trailer == nil {
 		removeTmp()
-		return "", fmt.Errorf("transfer: stream ended before trailer")
+		return "", Stats{}, fmt.Errorf("transfer: stream ended before trailer")
 	}
 	if err := tmp.Sync(); err != nil {
 		removeTmp()
-		return "", err
+		return "", Stats{}, err
 	}
 	_ = tmp.Close()
 
 	sum, total, err := hashFile(tmpName)
 	if err != nil {
 		_ = os.Remove(tmpName)
-		return "", err
+		return "", Stats{}, err
 	}
 	if sum != trailer.SHA256 || total != trailer.Total {
 		_ = os.Remove(tmpName)
-		return "", fmt.Errorf("transfer: integrity check failed")
+		return "", Stats{}, fmt.Errorf("transfer: integrity check failed")
 	}
 
 	var saved string
@@ -90,13 +92,13 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 		f, oerr := os.Open(tmpName)
 		if oerr != nil {
 			_ = os.Remove(tmpName)
-			return "", oerr
+			return "", Stats{}, oerr
 		}
 		err = extractTar(f, destDir)
 		_ = f.Close()
 		_ = os.Remove(tmpName)
 		if err != nil {
-			return "", err
+			return "", Stats{}, err
 		}
 		saved = destDir
 	} else {
@@ -110,7 +112,7 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 		}
 		if err := os.Rename(tmpName, final); err != nil {
 			_ = os.Remove(tmpName)
-			return "", err
+			return "", Stats{}, err
 		}
 		saved = final
 	}
@@ -118,7 +120,7 @@ func Receive(send SendFunc, in <-chan Msg, destDir string, overwrite OverwriteFn
 	if send != nil {
 		_ = send(protocol.ContentJSON, marshalDone())
 	}
-	return saved, nil
+	return saved, Stats{Bytes: trailer.Total, Duration: time.Since(start)}, nil
 }
 
 func hashFile(path string) (string, int64, error) {

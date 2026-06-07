@@ -23,10 +23,10 @@ func pair(t *testing.T, paths []string, dst string, ow OverwriteFn) (string, err
 	}
 	res := make(chan rr, 1)
 	go func() {
-		p, e := Receive(sendB, a2b, dst, ow, nil)
+		p, _, e := Receive(sendB, a2b, dst, ow, nil)
 		res <- rr{p, e}
 	}()
-	sendErr := Send(sendA, b2a, paths, nil)
+	_, sendErr := Send(sendA, b2a, paths, nil)
 	r := <-res
 	if sendErr != nil && r.err == nil {
 		return r.path, sendErr
@@ -77,7 +77,7 @@ func TestReceiveHashMismatch(t *testing.T) {
 	in <- Msg{protocol.ContentJSON, marshalTrailer(Trailer{SHA256: "deadbeef", Total: 3})}
 	close(in)
 
-	_, err := Receive(func(protocol.ContentType, []byte) error { return nil }, in, dst, nil, nil)
+	_, _, err := Receive(func(protocol.ContentType, []byte) error { return nil }, in, dst, nil, nil)
 	if err == nil {
 		t.Fatal("expected integrity error")
 	}
@@ -121,13 +121,48 @@ func TestReceiveOutOfOrderChunks(t *testing.T) {
 	in <- Msg{protocol.ContentJSON, marshalTrailer(Trailer{SHA256: sum, Total: int64(len(full))})}
 	close(in)
 
-	saved, err := Receive(func(protocol.ContentType, []byte) error { return nil }, in, dst, func(string) bool { return true }, nil)
+	saved, _, err := Receive(func(protocol.ContentType, []byte) error { return nil }, in, dst, func(string) bool { return true }, nil)
 	if err != nil {
 		t.Fatalf("Receive: %v", err)
 	}
 	got, _ := os.ReadFile(saved)
 	if !bytes.Equal(got, full) {
 		t.Fatalf("got %q want %q", got, full)
+	}
+}
+
+func TestRoundTripStats(t *testing.T) {
+	src := t.TempDir()
+	path := filepath.Join(src, "s.bin")
+	if err := os.WriteFile(path, make([]byte, 100000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+
+	a2b := make(chan Msg, 512)
+	b2a := make(chan Msg, 8)
+	sendA := func(ct protocol.ContentType, p []byte) error { a2b <- Msg{ct, append([]byte(nil), p...)}; return nil }
+	sendB := func(ct protocol.ContentType, p []byte) error { b2a <- Msg{ct, append([]byte(nil), p...)}; return nil }
+
+	type rr struct {
+		st  Stats
+		err error
+	}
+	res := make(chan rr, 1)
+	go func() {
+		_, st, e := Receive(sendB, a2b, dst, func(string) bool { return true }, nil)
+		res <- rr{st, e}
+	}()
+	sst, serr := Send(sendA, b2a, []string{path}, nil)
+	r := <-res
+	if serr != nil || r.err != nil {
+		t.Fatalf("send=%v recv=%v", serr, r.err)
+	}
+	if sst.Bytes != 100000 || r.st.Bytes != 100000 {
+		t.Fatalf("bytes send=%d recv=%d want 100000", sst.Bytes, r.st.Bytes)
+	}
+	if sst.Duration <= 0 || r.st.Duration <= 0 {
+		t.Fatalf("durations must be >0: send=%v recv=%v", sst.Duration, r.st.Duration)
 	}
 }
 
