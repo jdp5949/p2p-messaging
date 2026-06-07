@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -158,18 +157,26 @@ func main() {
 
 	if initiator {
 		// Mode B: chat initiator (`p2p send` with no path). As the initiator we
-		// never receive a file, so reading stdin immediately is safe.
+		// never receive a file, so reading stdin immediately is safe. Announce
+		// chat so the joiner can show "connected" and type without waiting for
+		// us to speak first.
+		_ = sendMsg(protocol.ContentJSON, transfer.ChatHello())
 		fmt.Printf("✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
 		go chatLoop(b, quit)
 		go func() {
 			for m := range inbound {
+				if transfer.Kind(m) == "chat" {
+					continue // skip the peer's own hello, if any
+				}
 				fmt.Printf("peer> %s\n", m.Payload)
 			}
 		}()
 	} else {
-		// Mode C: receiver. Peek the first inbound message to decide file-receive
+		// Mode C: joiner. Peek the first inbound message to decide file-receive
 		// vs chat. Do NOT touch stdin until we know it is chat — otherwise the
-		// overwrite prompt and chat input would both read stdin.
+		// file overwrite prompt and chat input would both read stdin. The
+		// initiator always announces its mode first (HEADER for a file, a chat
+		// HELLO otherwise), so this resolves within milliseconds of connecting.
 		go func() {
 			var first transfer.Msg
 			select {
@@ -177,7 +184,7 @@ func main() {
 			case <-quit:
 				return
 			}
-			if transferIsHeader(first) {
+			if transfer.Kind(first) == "header" {
 				inTransfer.Store(true)
 				merged := make(chan transfer.Msg, 128)
 				merged <- first
@@ -202,9 +209,13 @@ func main() {
 				close(quit)
 				return
 			}
-			// Chat: first message was text.
+			// Chat session.
 			fmt.Printf("✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
-			fmt.Printf("peer> %s\n", first.Payload)
+			if transfer.Kind(first) != "chat" {
+				// A plain text message (e.g. from an older peer that sent no
+				// hello) — show it; a hello is just a signal and is not printed.
+				fmt.Printf("peer> %s\n", first.Payload)
+			}
 			go chatLoop(b, quit)
 			for m := range inbound {
 				fmt.Printf("peer> %s\n", m.Payload)
@@ -243,17 +254,6 @@ func chatLoop(b *broker.Broker, quit chan struct{}) {
 			fmt.Fprintln(os.Stderr, "⚠ not delivered (peer offline?)")
 		}
 	}
-}
-
-// transferIsHeader reports whether m is a transfer HEADER message.
-func transferIsHeader(m transfer.Msg) bool {
-	if m.ContentType != protocol.ContentJSON {
-		return false
-	}
-	var probe struct {
-		T string `json:"t"`
-	}
-	return json.Unmarshal(m.Payload, &probe) == nil && probe.T == "header"
 }
 
 func usage() {
