@@ -29,7 +29,9 @@ if [ "${OS_ARCH_SELFTEST:-}" = "1" ]; then
 	exit $?
 fi
 
-set -- $(map_os_arch)
+mapping=$(map_os_arch) || exit 1
+# shellcheck disable=SC2086 # mapping is the controlled "<os> <arch>" output
+set -- $mapping
 OS=$1
 ARCH=$2
 ASSET="p2p-${OS}-${ARCH}"

@@ -134,8 +134,3 @@ func hashFile(path string) (string, int64, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
-
-func sha256OfBytes(b []byte) string {
-	s := sha256.Sum256(b)
-	return hex.EncodeToString(s[:])
-}
