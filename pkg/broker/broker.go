@@ -53,6 +53,13 @@ type Config struct {
 	// OnReconnectFailed is called once when all ReconnectDelays are exhausted.
 	OnReconnectFailed func()
 
+	// OnDisconnected is called once each time the connection drops, before
+	// reconnect attempts begin.
+	OnDisconnected func()
+
+	// OnReconnected is called when a reconnect attempt succeeds.
+	OnReconnected func()
+
 	// WAL: optional write-ahead log for crash-recovery of unacked outbound messages.
 	// nil = in-memory only (backward compatible).
 	WAL *wal.WAL
@@ -324,7 +331,14 @@ func (b *Broker) readLoop() {
 			}
 
 			if isConnError(err) {
-				if !b.handleReconnect(reconnectDelays) {
+				if b.cfg.OnDisconnected != nil {
+					b.cfg.OnDisconnected()
+				}
+				if b.handleReconnect(reconnectDelays) {
+					if b.cfg.OnReconnected != nil {
+						b.cfg.OnReconnected()
+					}
+				} else {
 					// Distinguish a clean shutdown (Close closed b.stop) from
 					// a genuine reconnect-window exhaustion. Only the latter
 					// is a real peer drop.

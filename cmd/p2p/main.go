@@ -95,39 +95,61 @@ func main() {
 		hsCfg.PAKECode = ""
 	}
 
-	fmt.Println("Connected. Type messages, Ctrl-C to quit.")
+	fmt.Printf("\r✓ Connected — peer online (%s). Type messages. /quit or Ctrl-C to exit.\n", connMode(dialer))
 
 	dropped := make(chan struct{})
+	quit := make(chan struct{})
 	b, err := broker.New(broker.Config{
 		Conn:       c,
 		ACKTimeout: 30 * time.Second,
 		OnInbound: func(m broker.InboundMsg) {
 			fmt.Printf("peer> %s\n", m.Payload)
 		},
+		OnDisconnected: func() {
+			fmt.Fprintln(os.Stderr, "⚠ peer offline — reconnecting (up to 60s)…")
+		},
+		OnReconnected: func() {
+			fmt.Fprintf(os.Stderr, "✓ peer back online (%s)\n", connMode(dialer))
+		},
 		OnReconnectFailed: func() {
-			fmt.Fprintln(os.Stderr, "\npeer lost, dropping after 60s")
+			fmt.Fprintln(os.Stderr, "✗ peer lost — gave up after 60s. Exiting.")
 			close(dropped)
 		},
 		PingInterval: 10 * time.Second,
 	})
 	fatalOn(err, "broker")
 
-	go chatLoop(b)
+	go chatLoop(b, quit)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	select {
 	case <-sig:
+	case <-quit:
+		fmt.Fprintln(os.Stderr, "bye")
 	case <-dropped:
 	}
 	_ = b.Close()
 }
 
-func chatLoop(b *broker.Broker) {
+// connMode reports the human label for the current connection path.
+func connMode(d *sessionDialer) string {
+	if d.LastDirect() {
+		return "direct P2P"
+	}
+	return "via relay"
+}
+
+func chatLoop(b *broker.Broker, quit chan struct{}) {
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
-		if _, err := b.Send(protocol.ContentText, protocol.PriorityNormal, sc.Bytes()); err != nil {
-			fmt.Fprintf(os.Stderr, "send: %v\n", err)
+		line := sc.Text()
+		if line == "/quit" || line == "/exit" {
+			close(quit)
+			return
+		}
+		if _, err := b.Send(protocol.ContentText, protocol.PriorityNormal, []byte(line)); err != nil {
+			fmt.Fprintln(os.Stderr, "⚠ not delivered (peer offline?)")
 		}
 	}
 }

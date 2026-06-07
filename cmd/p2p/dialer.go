@@ -31,6 +31,15 @@ type sessionDialer struct {
 	mu            sync.Mutex
 	established   bool
 	partnerPublic string
+	lastDirect    bool // true if the most recent connect was a direct punch
+}
+
+// LastDirect reports whether the most recent successful connect was a direct
+// P2P (hole-punched) connection rather than a relay bridge.
+func (d *sessionDialer) LastDirect() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lastDirect
 }
 
 // DialFunc is the function handed to conn.New.
@@ -46,6 +55,9 @@ func (d *sessionDialer) DialFunc() (net.Conn, error) {
 		c, err := d.dialDirect(dctx)
 		dcancel()
 		if err == nil {
+			d.mu.Lock()
+			d.lastDirect = true
+			d.mu.Unlock()
 			return c, nil
 		}
 	}
@@ -86,6 +98,7 @@ func (d *sessionDialer) rendezvous(ctx context.Context) (net.Conn, error) {
 	}
 	d.mu.Lock()
 	d.established = true
+	d.lastDirect = !res.UsedFallback
 	if res.Partner.PublicAddr != "" {
 		d.partnerPublic = res.Partner.PublicAddr
 	}
