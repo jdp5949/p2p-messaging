@@ -6,7 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ubuntu
+# Serves both the duckdns name (default) and the legacy nip.io name; TLS picks
+# the right cert per connection via SNI. -tls-cert/-tls-key are repeatable.
 ExecStart=/home/ubuntu/p2p-relay/relay -addr :9009 -tls \
+  -tls-cert /etc/letsencrypt/live/p2pmsg.duckdns.org/fullchain.pem \
+  -tls-key /etc/letsencrypt/live/p2pmsg.duckdns.org/privkey.pem \
   -tls-cert /etc/letsencrypt/live/129.153.24.33.nip.io/fullchain.pem \
   -tls-key /etc/letsencrypt/live/129.153.24.33.nip.io/privkey.pem
 Restart=always
