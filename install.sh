@@ -65,11 +65,23 @@ elif command -v sudo >/dev/null 2>&1 && [ -t 0 ]; then
 	sudo mv "$TMP" "$DEST" && sudo chmod +x "$DEST"
 else
 	DEST="$HOME/.local/bin/p2p"
-	mkdir -p "$(dirname "$DEST")"
+	BINDIR="$HOME/.local/bin"
+	mkdir -p "$BINDIR"
 	install_to "$DEST"
 	case ":$PATH:" in
-		*":$HOME/.local/bin:"*) ;;
-		*) echo "note: add $HOME/.local/bin to your PATH" >&2 ;;
+		*":$BINDIR:"*) ;; # already on PATH
+		*)
+			# Persist PATH in the user's shell rc so future shells find p2p.
+			line="export PATH=\"$BINDIR:\$PATH\""
+			for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+				[ -f "$rc" ] || continue
+				if ! grep -qF "$BINDIR" "$rc" 2>/dev/null; then
+					printf '\n# added by p2p installer\n%s\n' "$line" >> "$rc"
+				fi
+			done
+			echo "added $BINDIR to your PATH (in your shell rc)." >&2
+			echo "for THIS shell, run:  $line" >&2
+		;;
 	esac
 fi
 trap - EXIT
