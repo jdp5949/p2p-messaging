@@ -59,11 +59,7 @@ fi
 DEST="/usr/local/bin/p2p"
 install_to() { mv "$TMP" "$1" && chmod +x "$1"; }
 
-if [ -w "$(dirname "$DEST")" ] || [ "$(id -u)" = "0" ]; then
-	install_to "$DEST"
-elif command -v sudo >/dev/null 2>&1 && [ -t 0 ]; then
-	sudo mv "$TMP" "$DEST" && sudo chmod +x "$DEST"
-else
+local_install() {
 	DEST="$HOME/.local/bin/p2p"
 	BINDIR="$HOME/.local/bin"
 	mkdir -p "$BINDIR"
@@ -71,7 +67,6 @@ else
 	case ":$PATH:" in
 		*":$BINDIR:"*) ;; # already on PATH
 		*)
-			# Persist PATH in the user's shell rc so future shells find p2p.
 			line="export PATH=\"$BINDIR:\$PATH\""
 			for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
 				[ -f "$rc" ] || continue
@@ -80,9 +75,25 @@ else
 				fi
 			done
 			echo "added $BINDIR to your PATH (in your shell rc)." >&2
-			echo "for THIS shell, run:  $line" >&2
+			echo "" >&2
+			echo "  Run this now to use p2p in the current shell:" >&2
+			echo "    $line" >&2
 		;;
 	esac
+}
+
+if [ -w "$(dirname "$DEST")" ] || [ "$(id -u)" = "0" ]; then
+	install_to "$DEST"
+elif command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || [ -t 0 ]; }; then
+	# Use cp so TMP survives if chmod fails, allowing local_install fallback.
+	if sudo cp "$TMP" "$DEST" 2>/dev/null && sudo chmod +x "$DEST" 2>/dev/null; then
+		rm -f "$TMP"
+	else
+		echo "sudo install failed, falling back to ~/.local/bin" >&2
+		local_install
+	fi
+else
+	local_install
 fi
 trap - EXIT
 

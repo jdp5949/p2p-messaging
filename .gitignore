@@ -8,3 +8,5 @@ docs/superpowers/
 *.rvf
 *.rvf.lock
 .claude-flow/
+.claude/
+.agents/
