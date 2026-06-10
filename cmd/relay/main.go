@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	sessionIDMaxBytes  = 256
-	sessionWaitTimeout = 60 * time.Second
-	punchReportTimeout = 6 * time.Second
+	sessionIDMaxBytes    = 256
+	controlPhaseMaxBytes = 4096 // session-id line + peer JSON; Windows machines with many adapters can have large JSON
+	sessionWaitTimeout   = 60 * time.Second
+	punchReportTimeout   = 6 * time.Second
 )
 
 // peerInfo is what a peer sends in line 2.
@@ -115,9 +116,11 @@ func main() {
 
 // handle runs the full lifecycle for one peer connection.
 func handle(c net.Conn) {
-	// Cap reads during the control phase to guard against an unbounded
-	// session-id line. The cap is lifted before bridging (see coordinate).
-	limited := &io.LimitedReader{R: c, N: sessionIDMaxBytes + 1}
+	// Cap reads during the control phase to guard against unbounded input.
+	// controlPhaseMaxBytes covers both the session-id line and the peer JSON
+	// (which can be large on Windows with many virtual network adapters).
+	// The cap is lifted before bridging (see coordinate).
+	limited := &io.LimitedReader{R: c, N: controlPhaseMaxBytes}
 	reader := bufio.NewReader(limited)
 
 	// Line 1: session ID.

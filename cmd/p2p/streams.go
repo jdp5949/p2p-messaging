@@ -20,8 +20,9 @@ const streamReadBuf = 1 << 20 // 1 MB: max framed message the adapter reads
 type sessionStream struct{ s *crypto.Session }
 
 // streamIdleTimeout bounds a single read/write so a dead peer aborts the
-// transfer with an error instead of hanging forever.
-const streamIdleTimeout = 90 * time.Second
+// transfer with an error instead of hanging forever. 5 minutes allows for
+// relay congestion on large parallel transfers without false timeouts.
+const streamIdleTimeout = 5 * time.Minute
 
 func (a *sessionStream) WriteMsg(p []byte) error {
 	_ = a.s.SetWriteDeadline(time.Now().Add(streamIdleTimeout))
