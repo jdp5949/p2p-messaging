@@ -61,6 +61,8 @@ install_to() { mv "$TMP" "$1" && chmod +x "$1"; }
 
 if [ -w "$(dirname "$DEST")" ] || [ "$(id -u)" = "0" ]; then
 	install_to "$DEST"
+elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+	sudo mv "$TMP" "$DEST" && sudo chmod +x "$DEST"
 elif command -v sudo >/dev/null 2>&1 && [ -t 0 ]; then
 	sudo mv "$TMP" "$DEST" && sudo chmod +x "$DEST"
 else
@@ -80,7 +82,9 @@ else
 				fi
 			done
 			echo "added $BINDIR to your PATH (in your shell rc)." >&2
-			echo "for THIS shell, run:  $line" >&2
+			echo "" >&2
+			echo "  Run this now to use p2p in the current shell:" >&2
+			echo "    $line" >&2
 		;;
 	esac
 fi
