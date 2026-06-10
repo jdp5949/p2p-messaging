@@ -19,4 +19,9 @@ if ($userPath -notlike "*$dir*") {
     Write-Host "Added $dir to your user PATH."
 }
 
-Write-Host "installed p2p. Open a NEW terminal, then run: p2p send"
+# Update current session PATH so p2p works immediately without reopening terminal.
+if ($env:PATH -notlike "*$dir*") {
+    $env:PATH = "$env:PATH;$dir"
+}
+
+Write-Host "installed p2p. Run: p2p send"
