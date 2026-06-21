@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/flynn/noise"
 )
@@ -118,8 +119,13 @@ func parseIdentityFile(data []byte) (*Identity, error) {
 
 
 // KnownPeers manages pinned Ed25519 pubkeys (like SSH known_hosts).
+//
+// It is safe for concurrent use: parallel file transfers run several Noise
+// handshakes at once, each of which pins (Add) the peer's static key, so the
+// in-memory map and the on-disk file must be guarded against concurrent access.
 type KnownPeers struct {
 	path  string
+	mu    sync.Mutex
 	peers map[string]ed25519.PublicKey
 }
 
@@ -165,18 +171,29 @@ func (k *KnownPeers) parse(data []byte) error {
 
 // Get returns the pinned pubkey for a peer, if known.
 func (k *KnownPeers) Get(name string) (ed25519.PublicKey, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	pub, ok := k.peers[name]
 	return pub, ok
 }
 
-// Add pins a new pubkey for name.
+// Add pins a new pubkey for name and persists the store.
 func (k *KnownPeers) Add(name string, pub ed25519.PublicKey) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	k.peers[name] = pub
-	return k.Save()
+	return k.save()
 }
 
-// Save writes the known_peers file atomically.
+// Save writes the known_peers file.
 func (k *KnownPeers) Save() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.save()
+}
+
+// save serialises the in-memory map to disk. The caller must hold k.mu.
+func (k *KnownPeers) save() error {
 	if err := os.MkdirAll(filepath.Dir(k.path), 0700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
